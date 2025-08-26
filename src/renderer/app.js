@@ -9,13 +9,17 @@ const TERMINAL_OPTIONS = {
   cursorBlink: true,
   cursorStyle: 'block',
   scrollback: 1000,
-  allowProposedApi: false,
+  allowProposedApi: true, // Enable for better compatibility
   convertEol: true,
   disableStdin: false,
   allowTransparency: false,
   drawBoldTextInBrightColors: true,
   fastScrollModifier: 'alt',
   macOptionIsMeta: false,
+  // Windows-specific options for backspace handling
+  windowsMode: true,
+  logLevel: 'off', // Disable parsing error logs
+  rightClickSelectsWord: false, // Ensure proper backspace handling
   theme: {
     background: '#1e1e1e',
     foreground: '#d4d4d4',
@@ -49,12 +53,21 @@ class TerminalSession {
     
     console.log('Creating terminal session:', id);
     
-    // Initialize xterm with explicit dimensions
+    // Initialize xterm with explicit dimensions and Windows-compatible settings
     this.terminal = new Terminal({
       ...TERMINAL_OPTIONS,
       theme: TERMINAL_OPTIONS.theme,
       cols: 80,
-      rows: 24
+      rows: 24,
+      // Windows-specific settings for proper backspace handling
+      windowsMode: true,
+      altClickMovesCursor: false,
+      allowTransparency: false,
+      // Ensure proper key handling for backspace
+      macOptionIsMeta: false,
+      // Set scrollback and enable proper character handling
+      scrollback: 1000,
+      allowProposedApi: true
     });
     
     // Add fit addon
@@ -89,6 +102,12 @@ class TerminalSession {
         this.catOverlay.setState('idle');
       }, 3000);
     }
+    
+    // Create command interceptor
+    this.commandInterceptor = null;
+    if (window.CommandInterceptor) {
+      this.commandInterceptor = new window.CommandInterceptor();
+    }
   }
   
   async setupPtyConnection() {
@@ -112,6 +131,8 @@ class TerminalSession {
       // Handle data from PTY
       const dataCleanup = window.terminal.onData(this.id, (data) => {
         console.log(`Terminal ${this.id} received data:`, data);
+        
+        // Write all data directly to terminal - let xterm.js handle everything
         this.terminal.write(data);
         
         // Also handle clear screen ANSI sequences from PowerShell
@@ -143,27 +164,96 @@ class TerminalSession {
       
       // Send data to PTY
       const inputDisposable = this.terminal.onData((data) => {
+        // CRITICAL FIX: Add empty string detection & blocking at the very beginning
+        if (data === '' || data.length === 0) {
+          console.error('DETECTED EMPTY STRING INPUT - BLOCKING');
+          console.error('Stack trace:', new Error().stack);
+          return; // Don't send empty strings to terminal
+        }
+        
+        // Enhanced detailed character code logging
+        console.log(`Input data: "${data}", length: ${data.length}, char codes:`, 
+          Array.from(data).map(c => c.charCodeAt(0)));
         console.log(`Sending input to terminal ${this.id}:`, JSON.stringify(data));
         
-        // Handle special keys for clear command
+        // Handle special keys for command interception
         if (data === '\r') { // Enter key
-          // Check if user typed clear or cls
-          const trimmedCommand = currentCommand.trim().toLowerCase();
-          if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
-            // Clear the terminal screen locally
-            this.terminal.clear();
+          // Check for command interception first
+          const trimmedCommand = currentCommand.trim();
+          
+          // Try to intercept as a /command
+          if (this.commandInterceptor && trimmedCommand) {
+            const commandResult = this.commandInterceptor.interceptCommand(trimmedCommand);
+            
+            if (commandResult) {
+              // This is a command, handle it instead of sending to shell
+              // First send the enter key to complete the current line visually
+              window.terminal.write(this.id, data);
+              this.handleCommand(commandResult);
+              currentCommand = ''; // Reset command buffer
+              return; // Don't send to shell again
+            }
           }
-          currentCommand = ''; // Reset command buffer
+          
+          currentCommand = ''; // Reset command buffer after any enter key
         } else if (data === '\x7f' || data === '\x08') { // Backspace or delete
+          console.log('Detected backspace character:', JSON.stringify(data));
+          console.log('Backspace char code:', data.charCodeAt(0));
+          console.log('Command buffer before backspace:', JSON.stringify(currentCommand));
+          
+          // Handle backspace ONLY on the display side - don't send to shell yet
           if (currentCommand.length > 0) {
+            // Update our command buffer
             currentCommand = currentCommand.slice(0, -1);
+            
+            // Handle display erasure directly - move cursor back and erase character
+            this.terminal.write('\x08 \x08');
+            
+            console.log('Command buffer after backspace:', JSON.stringify(currentCommand));
+            console.log('Handled backspace on display side only');
+          } else {
+            console.log('Blocked backspace - no characters in command buffer to delete');
           }
+          
+          // Make cat react to typing
+          if (this.catOverlay && data) {
+            this.catOverlay.onUserTyping();
+          }
+          return; // Don't send backspace to shell - handle locally only
         } else if (data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) { // Printable characters
           currentCommand += data;
         }
         
-        // Send all data to PTY
-        window.terminal.write(this.id, data);
+        // CRITICAL FIX: Double-check empty strings (redundant safety check)
+        if (data === '' || data.length === 0) {
+          console.error('DETECTED EMPTY STRING - this is the bug! Not sending to terminal');
+          console.error('Current command buffer:', currentCommand);
+          console.error('Data type:', typeof data);
+          console.error('Data === "":', data === '');
+          console.error('Data.length:', data.length);
+          console.error('Stack trace:', new Error().stack);
+          return; // Don't send empty strings to the shell
+        }
+        
+        // Windows-specific backspace handling - Convert DEL to BS for PowerShell compatibility
+        let processedData = data;
+        if (data === '\x7f') {
+          // Convert DEL to BS for Windows PowerShell compatibility  
+          processedData = '\x08'; // Convert DEL to BS
+          console.log('Converted DEL to BS for Windows');
+          console.log('Original char code:', data.charCodeAt(0), 'New char code:', processedData.charCodeAt(0));
+        }
+        
+        // Final validation before sending
+        if (processedData === '' || processedData.length === 0) {
+          console.error('PROCESSED DATA IS EMPTY - BLOCKING SEND');
+          console.error('Original data:', JSON.stringify(data));
+          console.error('Processed data:', JSON.stringify(processedData));
+          return;
+        }
+        
+        // Send all data to PTY except backspace (which is handled above)
+        window.terminal.write(this.id, processedData);
         
         // Make cat react to typing
         if (this.catOverlay && data && data !== '\r') {
@@ -257,6 +347,128 @@ class TerminalSession {
     });
   }
   
+  /**
+   * Handle intercepted commands
+   * @param {CommandResult} commandResult 
+   */
+  handleCommand(commandResult) {
+    console.log('Handling command:', commandResult);
+    
+    switch (commandResult.type) {
+      case 'cat-ask':
+        this.handleCatAsk(commandResult.prompt);
+        break;
+      
+      case 'toggle':
+        this.handleToggle(commandResult.target, commandResult.value);
+        break;
+        
+      case 'help':
+        this.handleHelp(commandResult.command);
+        break;
+        
+      case 'spawn-agent':
+        this.handleSpawnAgent(commandResult);
+        break;
+        
+      case 'ask-agent':
+        this.handleAskAgent(commandResult.agent, commandResult.prompt);
+        break;
+        
+      case 'error':
+        this.terminal.write(`\r\n\x1b[31m${commandResult.message}\x1b[0m\r\n`);
+        break;
+        
+      default:
+        this.terminal.write(`\r\n\x1b[33mCommand not implemented yet: ${commandResult.type}\x1b[0m\r\n`);
+    }
+  }
+
+  /**
+   * Handle /cat command
+   */
+  handleCatAsk(prompt) {
+    this.terminal.write(`\r\n\x1b[36mAsking cat: ${prompt}\x1b[0m\r\n`);
+    
+    if (this.catOverlay) {
+      this.catOverlay.setState('thinking', 'Let me think...');
+      
+      // Simulate AI response for now
+      setTimeout(() => {
+        const responses = [
+          "Meow! That's interesting...",
+          "Purr... I think you should try that!",
+          "Hiss! I don't like that idea.",
+          "*stretches* Maybe later, human.",
+          "Mrow! Good question!"
+        ];
+        const response = responses[Math.floor(Math.random() * responses.length)];
+        this.catOverlay.setState('love', response);
+        this.terminal.write(`\x1b[32mCat says: ${response}\x1b[0m\r\n`);
+        
+        setTimeout(() => {
+          this.catOverlay.setState('idle');
+        }, 5000);
+      }, 2000);
+    } else {
+      this.terminal.write(`\x1b[33mCat overlay not available\x1b[0m\r\n`);
+    }
+  }
+
+  /**
+   * Handle /toggle command
+   */
+  handleToggle(target, value) {
+    if (target === 'cat') {
+      if (this.catOverlay) {
+        switch (value) {
+          case 'off':
+            this.catOverlay.hide();
+            this.terminal.write(`\r\n\x1b[32mCat overlay hidden\x1b[0m\r\n`);
+            break;
+          case 'on':
+            this.catOverlay.show();
+            this.terminal.write(`\r\n\x1b[32mCat overlay shown\x1b[0m\r\n`);
+            break;
+          case 'text':
+            // Future: switch to text-only mode
+            this.terminal.write(`\r\n\x1b[33mText-only mode not implemented yet\x1b[0m\r\n`);
+            break;
+        }
+      } else {
+        this.terminal.write(`\r\n\x1b[33mCat overlay not available\x1b[0m\r\n`);
+      }
+    }
+  }
+
+  /**
+   * Handle /help command
+   */
+  handleHelp(command) {
+    if (this.commandInterceptor) {
+      const helpText = this.commandInterceptor.getHelpText(command);
+      this.terminal.write(`\r\n\x1b[36mCat Terminal Commands:\x1b[0m\r\n${helpText}\r\n`);
+    } else {
+      this.terminal.write(`\r\n\x1b[33mCommand interceptor not available\x1b[0m\r\n`);
+    }
+  }
+
+  /**
+   * Handle /spawn command (placeholder for future agent system)
+   */
+  handleSpawnAgent(commandResult) {
+    this.terminal.write(`\x1b[33mAgent system not implemented yet.\x1b[0m\r\n`);
+    this.terminal.write(`\x1b[33mWould create agent: ${commandResult.name} (${commandResult.model})\x1b[0m\r\n`);
+  }
+
+  /**
+   * Handle /ask command (placeholder for future agent system)
+   */
+  handleAskAgent(agent, prompt) {
+    this.terminal.write(`\x1b[33mAgent system not implemented yet.\x1b[0m\r\n`);
+    this.terminal.write(`\x1b[33mWould ask @${agent}: ${prompt}\x1b[0m\r\n`);
+  }
+
   setupWindowControls() {
     const minimizeBtn = document.getElementById('minimize');
     const maximizeBtn = document.getElementById('maximize');

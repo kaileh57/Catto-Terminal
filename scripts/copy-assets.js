@@ -58,6 +58,15 @@ function copyAssets() {
       );
     }
     
+    // Copy command-interceptor.js if it exists
+    const commandInterceptorPath = path.join(__dirname, '../src/renderer/command-interceptor.js');
+    if (fs.existsSync(commandInterceptorPath)) {
+      copyFileSync(
+        commandInterceptorPath,
+        path.join(__dirname, '../dist/renderer/command-interceptor.js')
+      );
+    }
+    
     console.log('✅ Assets copied successfully');
     
   } catch (error) {
