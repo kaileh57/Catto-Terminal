@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cat Terminal</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="xterm.css">
 </head>
 <body>
   <div id="app">
@@ -19,6 +19,12 @@
     </div>
     <div id="terminal-container"></div>
   </div>
-  <script src="./index.js"></script>
+  <!-- Load xterm libraries locally -->
+  <script src="./lib/xterm.js"></script>
+  <script src="./lib/addon-fit.js"></script>
+  <!-- Load cat overlay -->
+  <script src="./cat-overlay.js"></script>
+  <!-- Load our app -->
+  <script src="./app.js"></script>
 </body>
 </html>

@@ -34,6 +34,30 @@ function copyAssets() {
       path.join(__dirname, '../dist/renderer/styles.css')
     );
     
+    // Copy xterm CSS
+    copyFileSync(
+      path.join(__dirname, '../node_modules/@xterm/xterm/css/xterm.css'),
+      path.join(__dirname, '../dist/renderer/xterm.css')
+    );
+    
+    // Copy app.js if it exists
+    const appJsPath = path.join(__dirname, '../src/renderer/app.js');
+    if (fs.existsSync(appJsPath)) {
+      copyFileSync(
+        appJsPath,
+        path.join(__dirname, '../dist/renderer/app.js')
+      );
+    }
+    
+    // Copy cat-overlay.js if it exists
+    const catOverlayPath = path.join(__dirname, '../src/renderer/cat-overlay.js');
+    if (fs.existsSync(catOverlayPath)) {
+      copyFileSync(
+        catOverlayPath,
+        path.join(__dirname, '../dist/renderer/cat-overlay.js')
+      );
+    }
+    
     console.log('✅ Assets copied successfully');
     
   } catch (error) {

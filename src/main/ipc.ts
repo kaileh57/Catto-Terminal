@@ -1,36 +1,98 @@
-import { ipcMain } from 'electron';
+import { ipcMain, WebContents } from 'electron';
+import { ProcessManager, ProcessOptions } from './process-manager';
+
+const processManager = new ProcessManager();
+const terminalSenders = new Map<string, WebContents>();
 
 export function setupIpcHandlers() {
-  // Create new terminal (mock for now)
+  // Handle process output
+  processManager.on('data', (id: string, data: string) => {
+    const sender = terminalSenders.get(id);
+    if (sender && !sender.isDestroyed()) {
+      console.log(`Sending data to terminal ${id}:`, data);
+      sender.send(`terminal:data:${id}`, data);
+    } else {
+      console.warn(`No sender for terminal ${id}`);
+    }
+  });
+
+  // Handle process exit
+  processManager.on('exit', (id: string, code: number | null, signal: string | null) => {
+    const sender = terminalSenders.get(id);
+    if (sender && !sender.isDestroyed()) {
+      sender.send(`terminal:exit:${id}`, { code, signal });
+    }
+    terminalSenders.delete(id);
+  });
+
+  // Handle process errors
+  processManager.on('error', (id: string, error: Error) => {
+    const sender = terminalSenders.get(id);
+    if (sender && !sender.isDestroyed()) {
+      sender.send(`terminal:error:${id}`, error.message);
+    }
+  });
+
+  // Create new terminal with real process
   ipcMain.handle('terminal:create', async (event, id: string, shell?: string) => {
     console.log(`Creating terminal ${id} with shell: ${shell || 'default'}`);
     
-    // Mock terminal data - simulate a simple prompt
-    setTimeout(() => {
-      const mockPrompt = process.platform === 'win32' ? 'C:\\> ' : '$ ';
-      event.sender.send(`terminal:data:${id}`, mockPrompt);
-    }, 100);
-    
-    return Promise.resolve();
-  });
-  
-  // Write to terminal (mock)
-  ipcMain.on('terminal:write', (event, id: string, data: string) => {
-    console.log(`Terminal ${id} received input:`, data);
-    
-    // Echo back the input for now
-    if (data === '\r') {
-      event.sender.send(`terminal:data:${id}`, '\r\n');
-      const mockPrompt = process.platform === 'win32' ? 'C:\\> ' : '$ ';
-      event.sender.send(`terminal:data:${id}`, mockPrompt);
-    } else {
-      event.sender.send(`terminal:data:${id}`, data);
+    try {
+      // Store the sender for this terminal
+      terminalSenders.set(id, event.sender);
+
+      // Create process options with default terminal size
+      const options: ProcessOptions = {
+        cols: 80,
+        rows: 30
+      };
+      if (shell) {
+        options.shell = shell;
+      }
+
+      // Create the actual process
+      const proc = processManager.createProcess(id, options);
+      
+      return { success: true };
+    } catch (error) {
+      console.error(`Failed to create terminal ${id}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, error: errorMessage };
     }
   });
   
-  // Resize terminal (mock)
+  // Write to terminal
+  ipcMain.on('terminal:write', (event, id: string, data: string) => {
+    try {
+      processManager.writeToProcess(id, data);
+    } catch (error) {
+      console.error(`Failed to write to terminal ${id}:`, error);
+    }
+  });
+  
+  // Resize terminal
   ipcMain.on('terminal:resize', (event, id: string, cols: number, rows: number) => {
     console.log(`Resizing terminal ${id} to ${cols}x${rows}`);
+    processManager.resizeProcess(id, cols, rows);
+  });
+
+  // Kill terminal
+  ipcMain.handle('terminal:kill', async (event, id: string) => {
+    console.log(`Killing terminal ${id}`);
+    processManager.killProcess(id);
+    terminalSenders.delete(id);
+    return { success: true };
+  });
+
+  // Get available shell profiles
+  ipcMain.handle('terminal:getProfiles', async () => {
+    try {
+      const profiles = await ProcessManager.detectShellProfiles();
+      return profiles;
+    } catch (error) {
+      console.error('Failed to detect shell profiles:', error);
+      return [];
+    }
   });
   
   // Get app info

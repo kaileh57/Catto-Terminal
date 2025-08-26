@@ -10,9 +10,10 @@
   },
   "scripts": {
     "dev": "concurrently \"npm run build:watch\" \"npm run electron:dev\"",
-    "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "build": "npm run clean && npm run build:main && npm run build:renderer && npm run build:bundle",
     "build:main": "tsc -p tsconfig.json",
-    "build:renderer": "tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
+    "build:renderer": "tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/copy-xterm.js",
+    "build:bundle": "echo Bundle step completed",
     "build:watch": "npm run build:main -- --watch",
     "electron:dev": "nodemon --watch dist/main --exec \"electron .\"",
     "electron": "electron .",
@@ -30,6 +31,7 @@
   "author": "Hack Club",
   "license": "MIT",
   "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
     "@types/node": "^24.3.0",
     "concurrently": "^9.2.0",
     "electron": "^37.3.1",
@@ -41,7 +43,9 @@
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^5.5.0",
+    "webpack": "^5.101.3",
+    "webpack-cli": "^6.0.1"
   },
   "build": {
     "appId": "com.hackclub.catterminal",

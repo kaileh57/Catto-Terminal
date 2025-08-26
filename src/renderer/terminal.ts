@@ -42,11 +42,25 @@ export class TerminalSession {
   
   private async setupPtyConnection() {
     try {
+      // Test: Write something to terminal immediately to verify xterm.js works
+      this.terminal.write('\x1b[33mInitializing Cat Terminal...\x1b[0m\r\n');
+      this.terminal.write('Creating PowerShell process...\r\n');
+      
       // Create PTY process
-      await window.terminal.create(this.id);
+      const result = await window.terminal.create(this.id);
+      console.log('Terminal create result:', result);
+      
+      // If creation failed, show error
+      if (result && !result.success) {
+        this.terminal.write(`\x1b[31mError: ${result.error || 'Failed to create terminal'}\x1b[0m\r\n`);
+        return;
+      }
+      
+      this.terminal.write('\x1b[32mConnected!\x1b[0m\r\n\r\n');
       
       // Handle data from PTY
       const dataCleanup = window.terminal.onData(this.id, (data: string) => {
+        console.log(`Terminal ${this.id} received data:`, data);
         this.terminal.write(data);
       });
       if (dataCleanup) {
@@ -55,6 +69,7 @@ export class TerminalSession {
       
       // Send data to PTY
       const inputDisposable = this.terminal.onData((data: string) => {
+        console.log(`Sending input to terminal ${this.id}:`, JSON.stringify(data));
         window.terminal.write(this.id, data);
       });
       this.cleanupFunctions.push(() => inputDisposable.dispose());

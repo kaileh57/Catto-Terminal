@@ -85,10 +85,10 @@ class CatTerminalApp {
   }
 }
 
-// Initialize app
-const app = new CatTerminalApp();
+// Initialize terminal application
+const catTerminal = new CatTerminalApp();
 
 // Cleanup on window close
 window.addEventListener('beforeunload', () => {
-  app.dispose();
+  catTerminal.dispose();
 });

@@ -1,5 +1,5 @@
 export interface ITerminalAPI {
-  create: (id: string) => Promise<void>;
+  create: (id: string, shell?: string) => Promise<{success: boolean; error?: string}>;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   onData: (id: string, callback: (data: string) => void) => (() => void) | void;
