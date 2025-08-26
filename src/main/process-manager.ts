@@ -46,8 +46,8 @@ export class ProcessManager extends EventEmitter {
 
     // Add PowerShell-specific arguments for better terminal behavior
     if (os.platform() === 'win32' && shell.includes('powershell')) {
-      // Simplified args - just basic PowerShell without complex initialization
-      args = ['-NoLogo'];
+      // Use -NoLogo and ensure prompt shows current directory
+      args = ['-NoLogo', '-NoExit'];
     }
 
     console.log(`Creating process ${id} with shell: ${shell}`, args);

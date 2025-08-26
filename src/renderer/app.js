@@ -159,119 +159,89 @@ class TerminalSession {
         this.cleanupFunctions.push(dataCleanup);
       }
       
-      // Track current command being typed
+      // Track current command being built locally
       let currentCommand = '';
       
-      // Send data to PTY
+      // Send data to PTY with local command editing
       const inputDisposable = this.terminal.onData((data) => {
-        // CRITICAL FIX: Add empty string detection & blocking at the very beginning
-        if (data === '' || data.length === 0) {
-          console.error('DETECTED EMPTY STRING INPUT - BLOCKING');
-          console.error('Stack trace:', new Error().stack);
-          return; // Don't send empty strings to terminal
-        }
-        
-        // Enhanced detailed character code logging
+        // Log for debugging
         console.log(`Input data: "${data}", length: ${data.length}, char codes:`, 
           Array.from(data).map(c => c.charCodeAt(0)));
-        console.log(`Sending input to terminal ${this.id}:`, JSON.stringify(data));
         
-        // Handle special keys for command interception
-        if (data === '\r') { // Enter key
-          // Check for command interception first
-          const trimmedCommand = currentCommand.trim();
-          
-          // Try to intercept as a /command
-          if (this.commandInterceptor && trimmedCommand) {
-            const commandResult = this.commandInterceptor.interceptCommand(trimmedCommand);
-            
-            if (commandResult) {
-              // This is a command, handle it instead of sending to shell
-              // First send the enter key to complete the current line visually
-              window.terminal.write(this.id, data);
-              this.handleCommand(commandResult);
-              currentCommand = ''; // Reset command buffer
-              return; // Don't send to shell again
-            }
-          }
-          
-          currentCommand = ''; // Reset command buffer after any enter key
-        } else if (data === '\x7f' || data === '\x08') { // Backspace or delete
-          console.log('Detected backspace character:', JSON.stringify(data));
-          console.log('Backspace char code:', data.charCodeAt(0));
-          console.log('Command buffer before backspace:', JSON.stringify(currentCommand));
-          
-          // Handle backspace ONLY on the display side - don't send to shell yet
+        // Handle backspace and delete characters (DEL=127, BS=8)
+        if (data === '\x7f' || data === '\x08') {
+          console.log('Handling backspace locally');
           if (currentCommand.length > 0) {
-            // Update our command buffer
+            // Remove last character from command buffer
             currentCommand = currentCommand.slice(0, -1);
-            
-            // Handle display erasure directly - move cursor back and erase character
+            // Visual backspace: move cursor back, write space, move back again
             this.terminal.write('\x08 \x08');
-            
-            console.log('Command buffer after backspace:', JSON.stringify(currentCommand));
-            console.log('Handled backspace on display side only');
-          } else {
-            console.log('Blocked backspace - no characters in command buffer to delete');
           }
-          
-          // Make cat react to typing
-          if (this.catOverlay && data) {
-            this.catOverlay.onUserTyping();
-          }
-          return; // Don't send backspace to shell - handle locally only
-        } else if (data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) { // Printable characters
-          currentCommand += data;
+          return; // Don't send to PowerShell
         }
         
-        // CRITICAL FIX: Double-check empty strings (redundant safety check)
+        // Handle truly empty strings
         if (data === '' || data.length === 0) {
-          console.error('DETECTED EMPTY STRING - this is the bug! Not sending to terminal');
-          console.error('Current command buffer:', currentCommand);
-          console.error('Data type:', typeof data);
-          console.error('Data === "":', data === '');
-          console.error('Data.length:', data.length);
-          console.error('Stack trace:', new Error().stack);
-          return; // Don't send empty strings to the shell
-        }
-        
-        // Windows-specific backspace handling - Convert DEL to BS for PowerShell compatibility
-        let processedData = data;
-        if (data === '\x7f') {
-          // Convert DEL to BS for Windows PowerShell compatibility  
-          processedData = '\x08'; // Convert DEL to BS
-          console.log('Converted DEL to BS for Windows');
-          console.log('Original char code:', data.charCodeAt(0), 'New char code:', processedData.charCodeAt(0));
-        }
-        
-        // Final validation before sending
-        if (processedData === '' || processedData.length === 0) {
-          console.error('PROCESSED DATA IS EMPTY - BLOCKING SEND');
-          console.error('Original data:', JSON.stringify(data));
-          console.error('Processed data:', JSON.stringify(processedData));
+          console.log('Received empty string - ignoring');
           return;
         }
         
-        // Send all data to PTY except backspace (which is handled above)
-        window.terminal.write(this.id, processedData);
-        
-        // Make cat react to typing
-        if (this.catOverlay && data && data !== '\r') {
-          this.catOverlay.onUserTyping();
+        // Handle printable characters (32-126)
+        if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) <= 126) {
+          console.log('Adding character to local command buffer');
+          currentCommand += data;
+          this.terminal.write(data); // Show character locally
+          return; // Don't send to PowerShell yet
         }
         
-        // Check for enter key (command execution)
-        if (data === '\r' && this.catOverlay) {
-          // Get the current line to see what command was typed
-          const buffer = this.terminal.buffer.active;
-          const cursorY = buffer.cursorY;
-          const line = buffer.getLine(cursorY);
-          if (line) {
-            const command = line.translateToString(true).trim();
-            if (command) {
-              this.catOverlay.onCommandExecuted(command);
+        // Handle Enter key
+        if (data === '\r') {
+          console.log('Enter pressed, command:', JSON.stringify(currentCommand));
+          
+          // Complete the visual line
+          this.terminal.write('\r\n');
+          
+          const trimmedCommand = currentCommand.trim();
+          
+          // Try to intercept as a /command
+          if (this.commandInterceptor && trimmedCommand && trimmedCommand.startsWith('/')) {
+            const commandResult = this.commandInterceptor.interceptCommand(trimmedCommand);
+            if (commandResult) {
+              this.handleCommand(commandResult);
+              currentCommand = ''; // Reset buffer
+              return; // Don't send to shell
             }
           }
+          
+          // Handle clear command specially
+          if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
+            this.terminal.clear(); // Clear the display
+            currentCommand = ''; // Reset buffer
+            window.terminal.write(this.id, trimmedCommand + '\r'); // Send to PowerShell
+            return;
+          }
+          
+          // Send complete command to PowerShell
+          if (trimmedCommand) {
+            window.terminal.write(this.id, trimmedCommand + '\r');
+          } else {
+            window.terminal.write(this.id, '\r'); // Empty command
+          }
+          
+          currentCommand = ''; // Reset buffer
+          return;
+        }
+        
+        // Handle control characters (Ctrl+C, etc.)
+        if (data.charCodeAt(0) < 32) {
+          console.log('Control character, sending to PowerShell');
+          window.terminal.write(this.id, data);
+          return;
+        }
+        
+        // Make cat react to typing
+        if (this.catOverlay && data) {
+          this.catOverlay.onUserTyping();
         }
       });
       this.cleanupFunctions.push(() => inputDisposable.dispose());
