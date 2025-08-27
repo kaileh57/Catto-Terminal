@@ -1,9 +1,11 @@
 import { ipcMain, WebContents } from 'electron';
 import { ProcessManager, ProcessOptions } from './process-manager';
 import { OpenRouterClient } from './openrouter-client';
+import { SimpleKeyStorage } from './key-storage';
 
 const processManager = new ProcessManager();
 const terminalSenders = new Map<string, WebContents>();
+let currentModel = 'anthropic/claude-3.5-haiku'; // Default model
 
 export function setupIpcHandlers() {
   // Handle process output
@@ -104,8 +106,13 @@ export function setupIpcHandlers() {
   // OpenRouter cat chat
   ipcMain.handle('cat:ask', async (event, prompt: string) => {
     try {
-      // For now, use mock client - will add real API key storage later
-      const client = OpenRouterClient.createMockClient();
+      // Try to get real API key, fallback to mock
+      const apiKey = await SimpleKeyStorage.getAPIKey('openrouter');
+      const client = apiKey ? new OpenRouterClient(apiKey) : OpenRouterClient.createMockClient();
+      
+      if (!apiKey) {
+        console.log('No OpenRouter API key found, using mock responses');
+      }
       
       const messages = [
         {
@@ -120,7 +127,7 @@ export function setupIpcHandlers() {
 
       let fullResponse = '';
       
-      await client.streamCompletion(messages, {}, (token) => {
+      await client.streamCompletion(messages, { model: currentModel }, (token) => {
         fullResponse += token;
         // Send each token to the renderer for streaming display
         event.sender.send('cat:token', token);
@@ -132,6 +139,64 @@ export function setupIpcHandlers() {
       return { success: true };
     } catch (error) {
       console.error('Cat ask error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Set AI model
+  ipcMain.handle('cat:setModel', async (event, model: string) => {
+    try {
+      console.log(`Setting AI model to: ${model}`);
+      currentModel = model;
+      return { success: true };
+    } catch (error) {
+      console.error('Set model error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // API Key management
+  ipcMain.handle('keys:store', async (event, provider: string, key: string) => {
+    try {
+      await SimpleKeyStorage.storeAPIKey(provider, key);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('keys:get', async (event, provider: string) => {
+    try {
+      const key = await SimpleKeyStorage.getAPIKey(provider);
+      return { success: true, key };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('keys:has', async (event, provider: string) => {
+    try {
+      const hasKey = await SimpleKeyStorage.hasAPIKey(provider);
+      return { success: true, hasKey };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('keys:remove', async (event, provider: string) => {
+    try {
+      await SimpleKeyStorage.removeAPIKey(provider);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('keys:list', async (event) => {
+    try {
+      const providers = await SimpleKeyStorage.listProviders();
+      return { success: true, providers };
+    } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });

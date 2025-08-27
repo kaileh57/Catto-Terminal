@@ -19,7 +19,8 @@ const TERMINAL_OPTIONS = {
   // Windows-specific options for backspace handling
   windowsMode: true,
   logLevel: 'off', // Disable parsing error logs
-  rightClickSelectsWord: false, // Ensure proper backspace handling
+  rightClickSelectsWord: true, // Enable text selection with right click
+  selectionMode: 'range', // Enable proper text selection
   theme: {
     background: '#1e1e1e',
     foreground: '#d4d4d4',
@@ -168,14 +169,48 @@ class TerminalSession {
         console.log(`Input data: "${data}", length: ${data.length}, char codes:`, 
           Array.from(data).map(c => c.charCodeAt(0)));
         
+        // Handle prompt mode separately
+        if (this.inPromptMode) {
+          return this.handlePromptInput(data);
+        }
+        
+        // Handle Ctrl+C for copying selected text
+        if (data === '\x03') {
+          console.log('Ctrl+C detected - checking for selection');
+          if (this.terminal.hasSelection()) {
+            const selectedText = this.terminal.getSelection();
+            console.log(`Copying selected text: "${selectedText}"`);
+            navigator.clipboard.writeText(selectedText).then(() => {
+              console.log('Text copied to clipboard successfully');
+            }).catch(error => {
+              console.error('Failed to copy to clipboard:', error);
+            });
+            // Clear selection after copying
+            this.terminal.clearSelection();
+            return;
+          } else {
+            // No selection - send Ctrl+C to PowerShell as usual
+            console.log('No selection - sending Ctrl+C to PowerShell');
+          }
+        }
+
+        // Handle arrow keys and escape sequences - don't send to PowerShell
+        if (data.startsWith('\x1b[')) {
+          console.log('Arrow key or escape sequence detected, not sending to PowerShell');
+          // TODO: Implement command history navigation here
+          return;
+        }
+        
         // Handle backspace and delete characters (DEL=127, BS=8)
         if (data === '\x7f' || data === '\x08') {
           console.log('Handling backspace locally');
           if (currentCommand.length > 0) {
             // Remove last character from command buffer
+            const beforeDelete = currentCommand;
             currentCommand = currentCommand.slice(0, -1);
             // Visual backspace: move cursor back, write space, move back again
             this.terminal.write('\x08 \x08');
+            console.log(`DEBUG: Backend deleted - before: "${beforeDelete}", after: "${currentCommand}"`);
           }
           return; // Don't send to PowerShell
         }
@@ -189,9 +224,39 @@ class TerminalSession {
         // Handle printable characters (32-126)
         if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) <= 126) {
           console.log('Adding character to local command buffer');
+          const beforeAdd = currentCommand;
           currentCommand += data;
           this.terminal.write(data); // Show character locally
+          console.log(`DEBUG: Backend added - before: "${beforeAdd}", after: "${currentCommand}"`);
           return; // Don't send to PowerShell yet
+        }
+        
+        // Handle Ctrl+V for paste in main terminal
+        if (data === '\x16') {
+          console.log('Ctrl+V detected in main terminal - attempting paste');
+          try {
+            navigator.clipboard.readText().then(clipboardText => {
+              console.log(`Main terminal clipboard content: "${clipboardText}"`);
+              if (clipboardText) {
+                // Add clipboard content to command buffer and display it
+                for (let i = 0; i < clipboardText.length; i++) {
+                  const char = clipboardText[i];
+                  // Only add printable characters, skip newlines
+                  if (char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126) {
+                    const beforeAdd = currentCommand;
+                    currentCommand += char;
+                    this.terminal.write(char);
+                    console.log(`DEBUG: Paste char added - before: "${beforeAdd}", after: "${currentCommand}"`);
+                  }
+                }
+              }
+            }).catch(error => {
+              console.error('Main terminal clipboard access failed:', error);
+            });
+          } catch (error) {
+            console.error('Main terminal clipboard error:', error);
+          }
+          return;
         }
         
         // Handle Enter key
@@ -344,6 +409,26 @@ class TerminalSession {
       case 'ask-agent':
         this.handleAskAgent(commandResult.agent, commandResult.prompt);
         break;
+
+      case 'setup-key':
+        this.handleSetupKey(commandResult.provider);
+        break;
+
+      case 'setup-status':
+        this.handleSetupStatus();
+        break;
+
+      case 'setup-help':
+        this.terminal.write(`\r\n\x1b[36m${commandResult.message}\x1b[0m\r\n`);
+        break;
+
+      case 'model-list':
+        this.terminal.write(`\r\n\x1b[36m${commandResult.message}\x1b[0m\r\n`);
+        break;
+
+      case 'model-set':
+        this.handleModelSet(commandResult.model);
+        break;
         
       case 'error':
         this.terminal.write(`\r\n\x1b[31m${commandResult.message}\x1b[0m\r\n`);
@@ -355,7 +440,7 @@ class TerminalSession {
   }
 
   /**
-   * Handle /cat command - now with real AI!
+   * Handle /cat command - now with real AI streaming!
    */
   async handleCatAsk(prompt) {
     this.terminal.write(`\r\n\x1b[36m🐱 Asking cat: ${prompt}\x1b[0m\r\n`);
@@ -365,44 +450,40 @@ class TerminalSession {
     }
 
     try {
-      // Set up streaming response handling
-      const { ipcRenderer } = require('electron');
-      
       let catResponse = '';
       
-      // Listen for streaming tokens
-      const tokenHandler = (event, token) => {
+      // Set up streaming token handler
+      const tokenCleanup = window.cat.onToken((token) => {
         catResponse += token;
+        this.terminal.write(token);
+        
         // Show the response building up in real-time in cat speech bubble
         if (this.catOverlay) {
-          this.catOverlay.setState('love', catResponse);
+          this.catOverlay.setState('love', catResponse.substring(0, 50) + (catResponse.length > 50 ? '...' : ''));
         }
-      };
+      });
       
-      // Listen for completion
-      const completeHandler = (event, fullResponse) => {
-        this.terminal.write(`\x1b[32mCat: ${fullResponse}\x1b[0m\r\n`);
+      // Set up completion handler
+      const completeCleanup = window.cat.onComplete((fullResponse) => {
+        this.terminal.write(`\r\n`);
         
         // Clean up event listeners
-        ipcRenderer.removeListener('cat:token', tokenHandler);
-        ipcRenderer.removeListener('cat:complete', completeHandler);
+        tokenCleanup();
+        completeCleanup();
         
-        // Return cat to idle after showing response for 5 seconds
-        setTimeout(() => {
-          if (this.catOverlay) {
-            this.catOverlay.setState('idle');
-          }
-        }, 5000);
-      };
+        if (this.catOverlay) {
+          this.catOverlay.setState('happy', 'Purr! Hope that helps!');
+          setTimeout(() => this.catOverlay.setState('idle'), 5000);
+        }
+      });
       
-      // Set up event listeners
-      ipcRenderer.on('cat:token', tokenHandler);
-      ipcRenderer.on('cat:complete', completeHandler);
-      
-      // Ask the cat
+      // Ask the cat using the exposed API
       const result = await window.cat.ask(prompt);
       
       if (!result.success) {
+        // Clean up listeners on error
+        tokenCleanup();
+        completeCleanup();
         throw new Error(result.error || 'Failed to ask cat');
       }
       
@@ -412,9 +493,7 @@ class TerminalSession {
       
       if (this.catOverlay) {
         this.catOverlay.setState('angry', 'Grr! Something went wrong!');
-        setTimeout(() => {
-          this.catOverlay.setState('idle');
-        }, 3000);
+        setTimeout(() => this.catOverlay.setState('idle'), 3000);
       }
     }
   }
@@ -432,11 +511,12 @@ class TerminalSession {
             break;
           case 'on':
             this.catOverlay.show();
-            this.terminal.write(`\r\n\x1b[32mCat overlay shown\x1b[0m\r\n`);
+            this.catOverlay.setTextOnlyMode(false); // Ensure visual mode is enabled
+            this.terminal.write(`\r\n\x1b[32mCat overlay shown in visual mode\x1b[0m\r\n`);
             break;
           case 'text':
-            // Future: switch to text-only mode
-            this.terminal.write(`\r\n\x1b[33mText-only mode not implemented yet\x1b[0m\r\n`);
+            this.catOverlay.setTextOnlyMode(true);
+            this.terminal.write(`\r\n\x1b[32mCat switched to text-only mode\x1b[0m\r\n`);
             break;
         }
       } else {
@@ -471,6 +551,182 @@ class TerminalSession {
   handleAskAgent(agent, prompt) {
     this.terminal.write(`\x1b[33mAgent system not implemented yet.\x1b[0m\r\n`);
     this.terminal.write(`\x1b[33mWould ask @${agent}: ${prompt}\x1b[0m\r\n`);
+  }
+
+  /**
+   * Handle /setup key command
+   */
+  async handleSetupKey(provider) {
+    this.terminal.write(`\r\n\x1b[36mSetting up ${provider} API key...\x1b[0m\r\n`);
+    this.terminal.write(`\x1b[33mPlease enter your ${provider} API key: \x1b[0m`);
+    
+    // Create input prompt
+    this.promptForInput('Enter API key (secure input - paste with Ctrl+V and press Enter): ', async (key) => {
+      if (!key || key.trim().length === 0) {
+        this.terminal.write(`\r\n\x1b[31mNo key entered. Setup cancelled.\x1b[0m\r\n`);
+        return;
+      }
+
+      try {
+        const result = await window.keys.store(provider, key.trim());
+        if (result.success) {
+          this.terminal.write(`\r\n\x1b[32m✅ ${provider} API key saved successfully!\x1b[0m\r\n`);
+          this.terminal.write(`\x1b[32mYou can now use /cat commands with real AI responses.\x1b[0m\r\n`);
+          
+          if (this.catOverlay) {
+            this.catOverlay.setState('happy', 'Ready for real AI!');
+            setTimeout(() => this.catOverlay.setState('idle'), 3000);
+          }
+        } else {
+          this.terminal.write(`\r\n\x1b[31m❌ Failed to save API key: ${result.error}\x1b[0m\r\n`);
+        }
+      } catch (error) {
+        this.terminal.write(`\r\n\x1b[31m❌ Error saving API key: ${error.message}\x1b[0m\r\n`);
+      }
+    });
+  }
+
+  /**
+   * Handle /setup status command
+   */
+  async handleSetupStatus() {
+    this.terminal.write(`\r\n\x1b[36mChecking API key status...\x1b[0m\r\n`);
+    
+    try {
+      const result = await window.keys.list();
+      if (result.success) {
+        if (result.providers && result.providers.length > 0) {
+          this.terminal.write(`\x1b[32m✅ Configured providers:\x1b[0m\r\n`);
+          result.providers.forEach(provider => {
+            this.terminal.write(`  • ${provider}\r\n`);
+          });
+        } else {
+          this.terminal.write(`\x1b[33m⚠️  No API keys configured.\x1b[0m\r\n`);
+          this.terminal.write(`\x1b[33mUse /setup key openrouter to add your OpenRouter API key.\x1b[0m\r\n`);
+        }
+      } else {
+        this.terminal.write(`\x1b[31m❌ Error checking status: ${result.error}\x1b[0m\r\n`);
+      }
+    } catch (error) {
+      this.terminal.write(`\x1b[31m❌ Error: ${error.message}\x1b[0m\r\n`);
+    }
+  }
+
+  /**
+   * Handle /model set command
+   */
+  async handleModelSet(model) {
+    this.terminal.write(`\r\n\x1b[36mSwitching to model: ${model}\x1b[0m\r\n`);
+    
+    try {
+      const result = await window.cat.setModel(model);
+      if (result.success) {
+        this.terminal.write(`\x1b[32m✅ Model switched successfully to ${model}!\x1b[0m\r\n`);
+        
+        if (this.catOverlay) {
+          this.catOverlay.setState('happy', `Now using ${model.includes('haiku') ? 'Haiku' : model.includes('sonnet') ? 'Sonnet' : 'GPT-4'}!`);
+          setTimeout(() => this.catOverlay.setState('idle'), 3000);
+        }
+      } else {
+        throw new Error(result.error || 'Failed to switch model');
+      }
+    } catch (error) {
+      console.error('Model switch error:', error);
+      this.terminal.write(`\x1b[31m❌ Error switching model: ${error.message}\x1b[0m\r\n`);
+      
+      if (this.catOverlay) {
+        this.catOverlay.setState('angry', 'Model switch failed!');
+        setTimeout(() => this.catOverlay.setState('idle'), 3000);
+      }
+    }
+  }
+
+  /**
+   * Prompt user for input
+   */
+  promptForInput(prompt, callback) {
+    this.terminal.write(`\r\n${prompt}`);
+    
+    // Set flag to indicate we're in prompt mode
+    this.inPromptMode = true;
+    this.promptBuffer = '';
+    this.promptCallback = (input) => {
+      this.inPromptMode = false;
+      this.promptCallback = null;
+      this.promptBuffer = '';
+      callback(input);
+    };
+  }
+
+  /**
+   * Handle input while in prompt mode
+   */
+  async handlePromptInput(data) {
+    console.log(`Prompt mode input: "${data}", length: ${data.length}, char codes:`, 
+      Array.from(data).map(c => c.charCodeAt(0)));
+    console.log(`Current prompt buffer: "${this.promptBuffer}"`);
+    
+    if (data === '\r') {
+      // Enter pressed - finish input
+      const input = this.promptBuffer;
+      console.log(`Prompt finished with input: "${input}"`);
+      if (this.promptCallback) {
+        this.promptCallback(input);
+      }
+      return;
+    } else if (data === '\x7f' || data === '\x08') {
+      // Backspace
+      if (this.promptBuffer.length > 0) {
+        this.promptBuffer = this.promptBuffer.slice(0, -1);
+        this.terminal.write('\x08 \x08');
+        console.log(`After backspace, prompt buffer: "${this.promptBuffer}"`);
+      }
+      return;
+    } else if (data === '\x16') {
+      // Ctrl+V - Handle paste
+      console.log('Ctrl+V detected - attempting paste from clipboard');
+      try {
+        const clipboardText = await navigator.clipboard.readText();
+        console.log(`Clipboard content: "${clipboardText}"`);
+        if (clipboardText) {
+          // Add clipboard content to buffer and display asterisks
+          for (let i = 0; i < clipboardText.length; i++) {
+            const char = clipboardText[i];
+            // Only add printable characters, skip newlines
+            if (char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126) {
+              this.promptBuffer += char;
+              this.terminal.write('*'); // Show asterisk instead of actual character
+            }
+          }
+          console.log(`After paste, prompt buffer: "${this.promptBuffer}"`);
+        }
+      } catch (error) {
+        console.error('Failed to read from clipboard:', error);
+        this.terminal.write('\r\n\x1b[31mClipboard access failed. Please type the key manually.\x1b[0m\r\n');
+      }
+      return;
+    } else if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) <= 126) {
+      // Printable character
+      this.promptBuffer += data;
+      // Show asterisk for security instead of actual character
+      this.terminal.write('*'); 
+      console.log(`Added char to prompt buffer: "${data}", buffer now: "${this.promptBuffer}"`);
+      return;
+    } else if (data.length > 1) {
+      // Handle pasted content (multi-character input)
+      console.log('Multi-character input detected (possible paste):', data);
+      for (let i = 0; i < data.length; i++) {
+        const char = data[i];
+        if (char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126) {
+          this.promptBuffer += char;
+          this.terminal.write('*'); // Show asterisk instead of actual character
+        }
+      }
+      console.log(`After paste, prompt buffer: "${this.promptBuffer}"`);
+      return;
+    }
+    
+    console.log('Ignoring input:', data, 'char codes:', Array.from(data).map(c => c.charCodeAt(0)));
   }
 
   setupWindowControls() {

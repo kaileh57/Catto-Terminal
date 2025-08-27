@@ -14,7 +14,7 @@ export interface OpenRouterOptions {
 export class OpenRouterClient extends EventEmitter {
   private apiKey: string;
   private baseURL = 'https://openrouter.ai/api/v1';
-  private defaultModel = 'anthropic/claude-3.5-sonnet';
+  private defaultModel = 'anthropic/claude-3.5-haiku';
 
   constructor(apiKey: string) {
     super();

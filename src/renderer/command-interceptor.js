@@ -49,6 +49,10 @@ class CommandInterceptor {
         return this.parseSpawnCommand(args);
       case 'ask':
         return this.parseAskCommand(args);
+      case 'setup':
+        return this.parseSetupCommand(args);
+      case 'model':
+        return this.parseModelCommand(args);
       default:
         return {
           type: 'error',
@@ -246,6 +250,89 @@ class CommandInterceptor {
   }
 
   /**
+   * Parse /setup command
+   * @param {string[]} args 
+   * @returns {CommandResult}
+   */
+  parseSetupCommand(args) {
+    if (args.length === 0) {
+      return {
+        type: 'setup-help',
+        message: 'Available setup commands:\n  /setup key openrouter - Set OpenRouter API key\n  /setup status - Check API key status'
+      };
+    }
+
+    const [subcommand, ...subArgs] = args;
+
+    switch (subcommand.toLowerCase()) {
+      case 'key':
+        if (subArgs.length === 0 || subArgs[0] !== 'openrouter') {
+          return {
+            type: 'error',
+            message: 'Usage: /setup key openrouter'
+          };
+        }
+        return {
+          type: 'setup-key',
+          provider: 'openrouter'
+        };
+      case 'status':
+        return {
+          type: 'setup-status'
+        };
+      default:
+        return {
+          type: 'error',
+          message: `Unknown setup command: ${subcommand}. Try /setup for help.`
+        };
+    }
+  }
+
+  /**
+   * Parse /model command
+   * @param {string[]} args 
+   * @returns {CommandResult}
+   */
+  parseModelCommand(args) {
+    if (args.length === 0) {
+      return {
+        type: 'model-list',
+        message: 'Available models:\\n  claude-3.5-sonnet - Powerful but slower\\n  claude-3.5-haiku - Fast and efficient (default)\\n  gpt-4 - OpenAI GPT-4\\n\\nUsage: /model <model-name>'
+      };
+    }
+
+    const model = args[0].toLowerCase();
+    const validModels = [
+      'claude-3.5-sonnet',
+      'claude-3.5-haiku', 
+      'anthropic/claude-3.5-sonnet',
+      'anthropic/claude-3.5-haiku',
+      'gpt-4',
+      'openai/gpt-4'
+    ];
+
+    // Normalize model names
+    let normalizedModel = model;
+    if (model === 'sonnet') normalizedModel = 'anthropic/claude-3.5-sonnet';
+    if (model === 'haiku') normalizedModel = 'anthropic/claude-3.5-haiku';
+    if (model === 'claude-3.5-sonnet') normalizedModel = 'anthropic/claude-3.5-sonnet';
+    if (model === 'claude-3.5-haiku') normalizedModel = 'anthropic/claude-3.5-haiku';
+    if (model === 'gpt-4') normalizedModel = 'openai/gpt-4';
+
+    if (!validModels.some(m => m.includes(normalizedModel) || normalizedModel.includes(m))) {
+      return {
+        type: 'error',
+        message: `Invalid model: ${model}. Use /model to see available models.`
+      };
+    }
+
+    return {
+      type: 'model-set',
+      model: normalizedModel
+    };
+  }
+
+  /**
    * Generate a random agent name
    * @returns {string}
    */
@@ -266,6 +353,8 @@ class CommandInterceptor {
     const helpTexts = {
       cat: '/cat "question" - Ask the cat a question using AI',
       toggle: '/toggle cat on|off|text - Toggle cat overlay visibility',
+      setup: '/setup key openrouter - Configure API keys and settings',
+      model: '/model [name] - Switch AI model (haiku, sonnet, gpt-4) or list available models',
       spawn: '/spawn -n name -m model - Create a new AI agent (future)',
       ask: '/ask @agent "question" - Ask a specific agent (future)',
       help: '/help [command] - Show help for all commands or specific command'

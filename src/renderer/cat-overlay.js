@@ -336,6 +336,21 @@ class CatOverlay {
     setTimeout(() => this.toggle(false), 1500);
   }
   
+  setTextOnlyMode(enabled) {
+    this.textOnlyMode = enabled;
+    if (enabled) {
+      // In text-only mode, hide the ASCII art but keep speech bubbles
+      this.catArt.style.display = 'none';
+      this.speechBubble.style.display = 'block';
+      this.showMessage("Text-only mode enabled", 3000);
+    } else {
+      // Normal mode - show ASCII art
+      this.catArt.style.display = 'block';
+      this.setState('happy', "Visual mode!");
+      setTimeout(() => this.setState('idle'), 2000);
+    }
+  }
+  
   dispose() {
     if (this.animationInterval) {
       clearInterval(this.animationInterval);

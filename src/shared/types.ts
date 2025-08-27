@@ -20,6 +20,17 @@ export interface IAppAPI {
 
 export interface ICatAPI {
   ask: (prompt: string) => Promise<{success: boolean; error?: string}>;
+  setModel: (model: string) => Promise<{success: boolean; error?: string}>;
+  onToken: (callback: (token: string) => void) => (() => void);
+  onComplete: (callback: (response: string) => void) => (() => void);
+}
+
+export interface IKeysAPI {
+  store: (provider: string, key: string) => Promise<{success: boolean; error?: string}>;
+  get: (provider: string) => Promise<{success: boolean; key?: string; error?: string}>;
+  has: (provider: string) => Promise<{success: boolean; hasKey?: boolean; error?: string}>;
+  remove: (provider: string) => Promise<{success: boolean; error?: string}>;
+  list: () => Promise<{success: boolean; providers?: string[]; error?: string}>;
 }
 
 // Global type declarations
@@ -28,5 +39,6 @@ declare global {
     terminal: ITerminalAPI;
     app: IAppAPI;
     cat: ICatAPI;
+    keys: IKeysAPI;
   }
 }

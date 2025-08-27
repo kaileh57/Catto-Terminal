@@ -37,9 +37,29 @@ const appAPI = {
 
 const catAPI = {
   ask: (prompt: string) => ipcRenderer.invoke('cat:ask', prompt),
+  setModel: (model: string) => ipcRenderer.invoke('cat:setModel', model),
+  onToken: (callback: (token: string) => void) => {
+    const handler = (_: any, token: string) => callback(token);
+    ipcRenderer.on('cat:token', handler);
+    return () => ipcRenderer.removeListener('cat:token', handler);
+  },
+  onComplete: (callback: (response: string) => void) => {
+    const handler = (_: any, response: string) => callback(response);
+    ipcRenderer.on('cat:complete', handler);
+    return () => ipcRenderer.removeListener('cat:complete', handler);
+  },
+};
+
+const keysAPI = {
+  store: (provider: string, key: string) => ipcRenderer.invoke('keys:store', provider, key),
+  get: (provider: string) => ipcRenderer.invoke('keys:get', provider),
+  has: (provider: string) => ipcRenderer.invoke('keys:has', provider),
+  remove: (provider: string) => ipcRenderer.invoke('keys:remove', provider),
+  list: () => ipcRenderer.invoke('keys:list'),
 };
 
 // Expose APIs to renderer
 contextBridge.exposeInMainWorld('terminal', terminalAPI);
 contextBridge.exposeInMainWorld('app', appAPI);
 contextBridge.exposeInMainWorld('cat', catAPI);
+contextBridge.exposeInMainWorld('keys', keysAPI);
