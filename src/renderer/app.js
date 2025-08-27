@@ -245,10 +245,9 @@ class TerminalSession {
         this.cleanupFunctions.push(dataCleanup);
       }
       
-      // Track current command being built locally
-      let currentCommand = '';
+      // Track current command being built locally - use class property
       
-      // Send data to PTY with local command editing
+      // Send data to PTY with local command editing (use arrow function to preserve 'this' context)
       const inputDisposable = this.terminal.onData((data) => {
         // Log for debugging
         console.log(`Input data: "${data}", length: ${data.length}, char codes:`, 
@@ -272,8 +271,8 @@ class TerminalSession {
             console.log(`Copying text: "${textToCopy}"`);
             navigator.clipboard.writeText(textToCopy).then(() => {
               console.log('Text copied to clipboard successfully');
-              // Show visual feedback on new line
-              this.terminal.write('\r\n\x1b[32m✅ Copied to clipboard\x1b[0m\r\n');
+              // Flash the entire terminal briefly to show copy action
+              this.flashTerminal();
             }).catch(error => {
               console.error('Failed to copy to clipboard:', error);
               this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
@@ -291,20 +290,27 @@ class TerminalSession {
         // Handle arrow keys and escape sequences - don't send to PowerShell
         if (data.startsWith('\x1b[')) {
           console.log('Arrow key or escape sequence detected, not sending to PowerShell');
-          // TODO: Implement command history navigation here
+          this.handleArrowKey(data);
           return;
         }
         
         // Handle backspace and delete characters (DEL=127, BS=8)
         if (data === '\x7f' || data === '\x08') {
           console.log('Handling backspace locally');
-          if (currentCommand.length > 0) {
+          
+          // If we were navigating history and user starts editing, exit history mode
+          if (this.isNavigatingHistory) {
+            this.isNavigatingHistory = false;
+            this.currentHistoryIndex = -1;
+            this.originalCommand = '';
+          }
+          
+          if (this.currentCommand.length > 0) {
             // Remove last character from command buffer
-            const beforeDelete = currentCommand;
-            currentCommand = currentCommand.slice(0, -1);
+            const beforeDelete = this.currentCommand;
+            this.currentCommand = this.currentCommand.slice(0, -1);
             // Visual backspace: move cursor back, write space, move back again
             this.terminal.write('\x08 \x08');
-            console.log(`DEBUG: Backend deleted - before: "${beforeDelete}", after: "${currentCommand}"`);
           }
           return; // Don't send to PowerShell
         }
@@ -318,10 +324,21 @@ class TerminalSession {
         // Handle printable characters (32-126)
         if (data.length === 1 && data.charCodeAt(0) >= 32 && data.charCodeAt(0) <= 126) {
           console.log('Adding character to local command buffer');
-          const beforeAdd = currentCommand;
-          currentCommand += data;
+          
+          // If we were navigating history and user starts typing, exit history mode
+          if (this.isNavigatingHistory) {
+            this.isNavigatingHistory = false;
+            this.currentHistoryIndex = -1;
+            this.originalCommand = '';
+          }
+          
+          // Initialize currentCommand if it's undefined
+          if (this.currentCommand === undefined) {
+            this.currentCommand = '';
+          }
+          
+          this.currentCommand += data;
           this.terminal.write(data); // Show character locally
-          console.log(`DEBUG: Backend added - before: "${beforeAdd}", after: "${currentCommand}"`);
           return; // Don't send to PowerShell yet
         }
         
@@ -337,12 +354,13 @@ class TerminalSession {
                   const char = clipboardText[i];
                   // Only add printable characters, skip newlines
                   if (char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126) {
-                    const beforeAdd = currentCommand;
-                    currentCommand += char;
+                    const beforeAdd = this.currentCommand;
+                    this.currentCommand += char;
                     this.terminal.write(char);
-                    console.log(`DEBUG: Paste char added - before: "${beforeAdd}", after: "${currentCommand}"`);
                   }
                 }
+                // Flash terminal to show paste action
+                this.flashTerminal();
               }
             }).catch(error => {
               console.error('Main terminal clipboard access failed:', error);
@@ -362,19 +380,22 @@ class TerminalSession {
         
         // Handle Enter key
         if (data === '\r') {
-          console.log('Enter pressed, command:', JSON.stringify(currentCommand));
+          console.log('Enter pressed, command:', JSON.stringify(this.currentCommand));
+          
+          // Add command to history before processing
+          this.addToHistory(this.currentCommand);
           
           // Complete the visual line
           this.terminal.write('\r\n');
           
-          const trimmedCommand = currentCommand.trim();
+          const trimmedCommand = this.currentCommand.trim();
           
           // Try to intercept as a /command
           if (this.commandInterceptor && trimmedCommand && trimmedCommand.startsWith('/')) {
             const commandResult = this.commandInterceptor.interceptCommand(trimmedCommand);
             if (commandResult) {
               this.handleCommand(commandResult);
-              currentCommand = ''; // Reset buffer
+              this.currentCommand = ''; // Reset buffer
               return; // Don't send to shell
             }
           }
@@ -382,7 +403,7 @@ class TerminalSession {
           // Handle clear command specially  
           if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
             this.terminal.clear(); // Clear the display
-            currentCommand = ''; // Reset buffer  
+            this.currentCommand = ''; // Reset buffer  
             return; // Don't send to PowerShell - already handled
           }
           
@@ -393,7 +414,7 @@ class TerminalSession {
             window.terminal.write(this.id, '\r'); // Empty command
           }
           
-          currentCommand = ''; // Reset buffer
+          this.currentCommand = ''; // Reset buffer
           return;
         }
         
@@ -972,6 +993,143 @@ class TerminalSession {
     console.log('Ignoring input:', data, 'char codes:', Array.from(data).map(c => c.charCodeAt(0)));
   }
 
+  /**
+   * Handle arrow key input for command history navigation
+   */
+  handleArrowKey(data) {
+    // Determine if we're dealing with up or down arrow
+    if (data === '\x1b[A') { // Up arrow
+      this.navigateHistoryUp();
+    } else if (data === '\x1b[B') { // Down arrow  
+      this.navigateHistoryDown();
+    }
+    // Ignore other escape sequences (left/right arrows, etc.)
+  }
+
+  /**
+   * Navigate up in command history (older commands)
+   */
+  navigateHistoryUp() {
+    // Determine which history to use based on current command
+    const isSlashCommand = this.currentCommand.startsWith('/');
+    const history = isSlashCommand ? this.commandHistory : this.shellHistory;
+    
+    if (history.length === 0) return; // No history available
+    
+    // If we're starting history navigation, save the current command
+    if (!this.isNavigatingHistory) {
+      this.originalCommand = this.currentCommand;
+      this.currentHistoryIndex = history.length; // Start after the last item
+      this.isNavigatingHistory = true;
+    }
+    
+    // Move up in history (older commands)
+    if (this.currentHistoryIndex > 0) {
+      this.currentHistoryIndex--;
+      const historyCommand = history[this.currentHistoryIndex];
+      this.replaceCurrentCommand(historyCommand);
+    }
+  }
+
+  /**
+   * Navigate down in command history (newer commands)  
+   */
+  navigateHistoryDown() {
+    if (!this.isNavigatingHistory) return; // Not in history mode
+    
+    const isSlashCommand = this.currentCommand.startsWith('/');
+    const history = isSlashCommand ? this.commandHistory : this.shellHistory;
+    
+    // Move down in history (newer commands)
+    if (this.currentHistoryIndex < history.length - 1) {
+      this.currentHistoryIndex++;
+      const historyCommand = history[this.currentHistoryIndex];
+      this.replaceCurrentCommand(historyCommand);
+    } else if (this.currentHistoryIndex === history.length - 1) {
+      // At the newest command, go back to original  
+      this.currentHistoryIndex++;
+      this.replaceCurrentCommand(this.originalCommand);
+    }
+  }
+
+  /**
+   * Replace the current command line with a new command
+   */
+  replaceCurrentCommand(newCommand) {
+    // Clear current command visually
+    this.clearCurrentCommand();
+    
+    // Set new command and display it
+    this.currentCommand = newCommand;
+    if (newCommand) {
+      this.terminal.write(newCommand);
+    }
+  }
+
+  /**
+   * Clear the current command line visually
+   */
+  clearCurrentCommand() {
+    // Move cursor back to beginning of command and clear to end of line
+    if (this.currentCommand.length > 0) {
+      // Move cursor back by the length of current command
+      this.terminal.write('\x1b[' + this.currentCommand.length + 'D'); // Move cursor left
+      this.terminal.write('\x1b[K'); // Clear from cursor to end of line
+    }
+  }
+
+  /**
+   * Flash the terminal briefly to provide visual feedback
+   */
+  flashTerminal() {
+    const terminalElement = this.terminal.element;
+    if (terminalElement) {
+      // Quick flash with shorter duration
+      terminalElement.style.transition = 'filter 0.05s ease';
+      terminalElement.style.filter = 'brightness(1.3)';
+      
+      // Remove flash after 80ms for quicker feedback
+      setTimeout(() => {
+        terminalElement.style.filter = 'brightness(1)';
+        setTimeout(() => {
+          terminalElement.style.transition = '';
+        }, 50);
+      }, 80);
+    }
+  }
+
+  /**
+   * Add command to appropriate history
+   */
+  addToHistory(command) {
+    // Initialize arrays if they don't exist (safety check)
+    if (!this.commandHistory) {
+      console.log('Initializing command history');
+      this.commandHistory = [];
+    }
+    if (!this.shellHistory) {
+      console.log('Initializing shell history');
+      this.shellHistory = [];
+    }
+    
+    if (!command || command.trim().length === 0) return;
+    
+    const trimmedCommand = command.trim();
+    const isSlashCommand = trimmedCommand.startsWith('/');
+    const history = isSlashCommand ? this.commandHistory : this.shellHistory;
+    
+    // Don't add duplicate consecutive commands
+    if (history.length === 0 || history[history.length - 1] !== trimmedCommand) {
+      history.push(trimmedCommand);
+      console.log(`Added to ${isSlashCommand ? 'command' : 'shell'} history: "${trimmedCommand}"`);
+    }
+    
+    // Reset history navigation state
+    this.currentHistoryIndex = -1;
+    this.originalCommand = '';
+    this.isNavigatingHistory = false;
+  }
+
   setupWindowControls() {
     const minimizeBtn = document.getElementById('minimize');
     const maximizeBtn = document.getElementById('maximize');
@@ -1008,6 +1166,17 @@ class TerminalSession {
 class CatTerminalApp {
   constructor() {
     this.terminal = null;
+    
+    // Command input state
+    this.currentCommand = '';
+    
+    // Command history management
+    this.commandHistory = [];        // For /commands
+    this.shellHistory = [];          // For shell commands
+    this.currentHistoryIndex = -1;
+    this.originalCommand = '';
+    this.isNavigatingHistory = false;
+    
     this.init();
   }
   

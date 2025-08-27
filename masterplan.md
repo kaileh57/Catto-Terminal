@@ -104,18 +104,19 @@
 - **Provider Routing** - :nitro (speed), :floor (price), specific provider selection
 - **Working PowerShell Terminal** - Full integration with backspace/clear fixes
 
-#### 🎯 **NEXT PRIORITY: System Prompt Customization (2h)**
-**Goal:** Allow users to customize the cat's personality and behavior
+#### ✅ **COMPLETED: System Prompt Customization (2h)**
+**Goal:** Allow users to customize the cat's personality and behavior ✅ COMPLETE
 
-**What users need working:**
+**What users have working:**
 1. **✅ DONE:** Terminal with PowerShell integration  
 2. **✅ DONE:** Cat overlay with reactions and animations
-3. **✅ DONE:** `/cat` command with AI responses (mock)
+3. **✅ DONE:** `/cat` command with AI responses (real OpenRouter)
 4. **✅ DONE:** `/toggle cat on|off|text` command 
 5. **✅ DONE:** Real OpenRouter API key storage with `/setup` commands
 6. **✅ DONE:** `/help` command with command list
-7. **🔥 NEXT:** Command history with up/down arrow keys (3h)
-8. **🔥 NEXT:** Fix arrow key cursor movement issues (1h)
+7. **✅ DONE:** System prompt customization with 5 presets + custom + preview
+8. **🔥 NEXT:** Command history with up/down arrow keys (3h)
+9. **🔥 NEXT:** Fix arrow key cursor movement issues (1h)
 
 **After Phase 2 is 100% complete, we can choose:**
 - **Option A:** Polish & ship minimal viable product 
@@ -961,13 +962,14 @@ export class CommandAutocomplete {
 - PowerShell-style history integration
 - Separate history for `/` commands vs regular shell commands
 
-### 5.5 Customizable Cat System Prompt (2h) **NEW FEATURE**
-**Allow users to customize the cat's personality and behavior:**
-- **`/setup prompt` command** to configure custom system prompt
-- **Template system** with variables for terminal context
-- **Preset personalities** (professional, casual, developer-focused, playful)
-- **Prompt validation** and preview functionality
-- **Reset to default** option
+### ✅ 5.5 Customizable Cat System Prompt (2h) **COMPLETED** 
+**Allow users to customize the cat's personality and behavior - ✅ DONE:**
+- **✅ `/setup prompt` command** to configure custom system prompt
+- **✅ Preset personalities** (professional, casual, developer, playful, default)
+- **✅ `/setup prompt preview <preset>`** functionality for testing presets
+- **✅ Custom prompt input** with fallback to default if empty
+- **✅ Complete backend IPC implementation** with preset templates
+- **✅ Cat overlay integration** with personality-specific reactions
 
 ### 5.6 Terminal Context Integration (3h) **NEW FEATURE**  
 **Feed terminal session context to AI for better responses:**
