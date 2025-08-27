@@ -522,6 +522,18 @@ class TerminalSession {
         this.terminal.write(`\r\n\x1b[36m${commandResult.message}\x1b[0m\r\n`);
         break;
 
+      case 'prompt-help':
+        this.terminal.write(`\r\n\x1b[36m${commandResult.message}\x1b[0m\r\n`);
+        break;
+
+      case 'prompt-set':
+        this.handlePromptSet(commandResult.preset);
+        break;
+
+      case 'prompt-preview':
+        this.handlePromptPreview(commandResult.preset);
+        break;
+
       case 'model-list':
         this.terminal.write(`\r\n\x1b[36m${commandResult.message}\x1b[0m\r\n`);
         break;
@@ -751,6 +763,124 @@ class TerminalSession {
         this.catOverlay.setState('angry', 'Model switch failed!');
         setTimeout(() => this.catOverlay.setState('idle'), 3000);
       }
+    }
+  }
+
+  /**
+   * Handle /setup prompt command
+   */
+  async handlePromptSet(preset) {
+    this.terminal.write(`\r\n\x1b[36mConfiguring system prompt: ${preset}\x1b[0m\r\n`);
+    
+    if (preset === 'custom') {
+      this.promptForInput('Enter your custom system prompt (or press Enter for default): ', async (customPrompt) => {
+        if (!customPrompt || customPrompt.trim().length === 0) {
+          preset = 'default';
+        }
+        
+        const result = await window.cat.setSystemPrompt(preset, customPrompt?.trim());
+        this.handlePromptSetResult(result, preset, customPrompt);
+      });
+      return;
+    }
+    
+    try {
+      const result = await window.cat.setSystemPrompt(preset);
+      this.handlePromptSetResult(result, preset);
+    } catch (error) {
+      console.error('Prompt set error:', error);
+      this.terminal.write(`\x1b[31m❌ Error setting prompt: ${error.message}\x1b[0m\r\n`);
+      
+      if (this.catOverlay) {
+        this.catOverlay.setState('angry', 'Prompt setup failed!');
+        setTimeout(() => this.catOverlay.setState('idle'), 3000);
+      }
+    }
+  }
+
+  /**
+   * Handle the result of setting a system prompt
+   */
+  handlePromptSetResult(result, preset, customPrompt) {
+    if (result.success) {
+      this.terminal.write(`\x1b[32m✅ System prompt set to "${preset}"!\x1b[0m\r\n`);
+      
+      if (preset === 'custom' && customPrompt) {
+        this.terminal.write(`\x1b[37mCustom prompt: "${customPrompt.substring(0, 50)}${customPrompt.length > 50 ? '...' : ''}"\x1b[0m\r\n`);
+      }
+      
+      if (this.catOverlay) {
+        let message = '';
+        switch (preset) {
+          case 'professional': message = 'Ready for business!'; break;
+          case 'casual': message = 'Hey there, friend!'; break;
+          case 'developer': message = 'Code mode activated!'; break;
+          case 'playful': message = 'Let\'s have some fun!'; break;
+          case 'custom': message = 'Custom personality ready!'; break;
+          case 'default': message = 'Back to my true self!'; break;
+          default: message = 'Personality updated!';
+        }
+        
+        this.catOverlay.setState('happy', message);
+        setTimeout(() => this.catOverlay.setState('idle'), 3000);
+      }
+    } else {
+      this.terminal.write(`\x1b[31m❌ Failed to set system prompt: ${result.error}\x1b[0m\r\n`);
+      
+      if (this.catOverlay) {
+        this.catOverlay.setState('angry', 'Prompt setup failed!');
+        setTimeout(() => this.catOverlay.setState('idle'), 3000);
+      }
+    }
+  }
+
+  /**
+   * Handle prompt preview command
+   */
+  handlePromptPreview(preset) {
+    this.terminal.write(`\r\n\x1b[36m📋 Preview for "${preset}" preset:\x1b[0m\r\n`);
+    
+    const presetDescriptions = {
+      professional: {
+        description: 'A formal, business-oriented assistant that focuses on efficiency and precision.',
+        behavior: 'Will provide clear, accurate responses with professional tone. Avoids casual language.',
+        example: '"I can assist you with your terminal tasks. Please specify your requirements for optimal results."'
+      },
+      casual: {
+        description: 'A friendly, relaxed assistant that uses warm, approachable communication.',
+        behavior: 'Uses conversational tone, may include friendly expressions and casual language.',
+        example: '"Hey! What can I help you with today? I\'m here to make your terminal experience smooth."'
+      },
+      developer: {
+        description: 'A technical assistant specialized in software development and coding.',
+        behavior: 'Provides detailed technical explanations, best practices, and precise programming guidance.',
+        example: '"I can help analyze your code, suggest optimizations, and explain technical concepts in detail."'
+      },
+      playful: {
+        description: 'A fun, creative cat assistant with personality and cat-themed expressions.',
+        behavior: 'Uses cat puns, emojis, and playful language while remaining helpful.',
+        example: '"That\'s purr-fect! 🐱 Let me help you with that - it\'ll be the cat\'s meow when we\'re done!"'
+      },
+      default: {
+        description: 'The original cat assistant - witty but balanced, with occasional cat expressions.',
+        behavior: 'Combines helpfulness with charm, uses some cat expressions but doesn\'t overdo it.',
+        example: '"I\'m here to help with your terminal tasks. Let\'s make this purr-fectly smooth!"'
+      }
+    };
+    
+    const preset_info = presetDescriptions[preset];
+    if (preset_info) {
+      this.terminal.write(`\x1b[37m📝 Description: ${preset_info.description}\x1b[0m\r\n`);
+      this.terminal.write(`\x1b[37m⚡ Behavior: ${preset_info.behavior}\x1b[0m\r\n`);
+      this.terminal.write(`\x1b[37m💬 Example: ${preset_info.example}\x1b[0m\r\n`);
+      this.terminal.write(`\r\n\x1b[33m💡 To apply this preset, use: /setup prompt ${preset}\x1b[0m\r\n`);
+      
+      if (this.catOverlay) {
+        this.catOverlay.setState('thinking', `Previewing ${preset}...`);
+        setTimeout(() => this.catOverlay.setState('idle'), 2000);
+      }
+    } else {
+      this.terminal.write(`\x1b[31m❌ Unknown preset: ${preset}\x1b[0m\r\n`);
     }
   }
 

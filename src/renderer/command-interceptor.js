@@ -258,7 +258,7 @@ class CommandInterceptor {
     if (args.length === 0) {
       return {
         type: 'setup-help',
-        message: 'Available setup commands:\n  /setup key openrouter - Set OpenRouter API key\n  /setup status - Check API key status'
+        message: 'Available setup commands:\\n  /setup key openrouter - Set OpenRouter API key\\n  /setup prompt [preset] - Configure system prompt\\n  /setup status - Check configuration status'
       };
     }
 
@@ -276,6 +276,8 @@ class CommandInterceptor {
           type: 'setup-key',
           provider: 'openrouter'
         };
+      case 'prompt':
+        return this.parsePromptSetupCommand(subArgs);
       case 'status':
         return {
           type: 'setup-status'
@@ -286,6 +288,66 @@ class CommandInterceptor {
           message: `Unknown setup command: ${subcommand}. Try /setup for help.`
         };
     }
+  }
+
+  /**
+   * Parse /setup prompt command
+   * @param {string[]} args 
+   * @returns {CommandResult}
+   */
+  parsePromptSetupCommand(args) {
+    if (args.length === 0) {
+      return {
+        type: 'prompt-help',
+        message: 'System Prompt Configuration:\\n\\n' +
+          'Available presets:\\n' +
+          '  professional - Formal, business-oriented assistant\\n' +
+          '  casual - Friendly, relaxed conversation style\\n' +
+          '  developer - Code-focused with technical expertise\\n' +
+          '  playful - Fun and creative with cat personality\\n' +
+          '  custom - Set your own custom prompt\\n' +
+          '  default - Reset to original cat assistant\\n' +
+          '  preview <preset> - Preview what a preset will do\\n\\n' +
+          'Usage:\\n' +
+          '  /setup prompt professional\\n' +
+          '  /setup prompt preview developer\\n' +
+          '  /setup prompt custom\\n' +
+          '  /setup prompt default'
+      };
+    }
+
+    const preset = args[0].toLowerCase();
+    const validPresets = ['professional', 'casual', 'developer', 'playful', 'custom', 'default', 'preview'];
+
+    // Handle preview command
+    if (preset === 'preview') {
+      const previewPreset = args[1]?.toLowerCase() || '';
+      const validPreviewPresets = ['professional', 'casual', 'developer', 'playful', 'default'];
+      
+      if (!previewPreset || !validPreviewPresets.includes(previewPreset)) {
+        return {
+          type: 'error',
+          message: `Preview requires a valid preset. Usage: /setup prompt preview <preset>`
+        };
+      }
+      
+      return {
+        type: 'prompt-preview',
+        preset: previewPreset
+      };
+    }
+
+    if (!['professional', 'casual', 'developer', 'playful', 'custom', 'default'].includes(preset)) {
+      return {
+        type: 'error',
+        message: `Invalid preset: ${preset}. Valid presets: professional, casual, developer, playful, custom, default, preview`
+      };
+    }
+
+    return {
+      type: 'prompt-set',
+      preset: preset
+    };
   }
 
   /**
@@ -391,7 +453,7 @@ class CommandInterceptor {
     const helpTexts = {
       cat: '/cat "question" - Ask the cat a question using AI',
       toggle: '/toggle cat on|off|text - Toggle cat overlay visibility',
-      setup: '/setup key openrouter - Configure API keys and settings',
+      setup: '/setup key|prompt|status - Configure API keys, system prompts, and settings',
       model: '/model [name] - Switch AI model (haiku, sonnet, gpt-4) or list available models',
       spawn: '/spawn -n name -m model - Create a new AI agent (future)',
       ask: '/ask @agent "question" - Ask a specific agent (future)',

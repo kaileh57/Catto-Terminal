@@ -7,6 +7,7 @@ const processManager = new ProcessManager();
 const terminalSenders = new Map<string, WebContents>();
 let currentModel = 'anthropic/claude-3.5-haiku'; // Default model
 let currentProviderPreferences: any = {}; // Provider routing preferences
+let currentSystemPrompt = 'You are a helpful, witty cat assistant in a terminal. Be concise but charming. Use some cat-like expressions occasionally but don\'t overdo it. You help with coding, questions, and terminal tasks.'; // Current system prompt
 
 export function setupIpcHandlers() {
   // Handle process output
@@ -118,7 +119,7 @@ export function setupIpcHandlers() {
       const messages = [
         {
           role: 'system' as const,
-          content: 'You are a helpful, witty cat assistant in a terminal. Be concise but charming. Use some cat-like expressions occasionally but don\'t overdo it. You help with coding, questions, and terminal tasks.'
+          content: currentSystemPrompt
         },
         {
           role: 'user' as const,
@@ -143,6 +144,43 @@ export function setupIpcHandlers() {
       return { success: true };
     } catch (error) {
       console.error('Cat ask error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Set system prompt with preset templates
+  ipcMain.handle('cat:setSystemPrompt', async (event, preset: string, customPrompt?: string) => {
+    try {
+      console.log(`Setting system prompt preset: ${preset}`);
+      
+      const presetPrompts = {
+        professional: 'You are a professional AI assistant in a terminal environment. Provide clear, accurate, and business-appropriate responses. Focus on efficiency and precision in your communication.',
+        casual: 'You are a friendly AI assistant in a terminal. Keep things relaxed and conversational while being helpful. Use a warm, approachable tone in your responses.',
+        developer: 'You are a technical AI assistant specialized in software development. Provide detailed code explanations, best practices, and technical guidance. Be precise with programming concepts and terminology.',
+        playful: 'You are a fun and creative cat assistant in a terminal! 🐱 Be playful and use cat expressions like "purr-fect!" and "that\'s the cat\'s meow!" Keep responses engaging and delightful while still being helpful.',
+        default: 'You are a helpful, witty cat assistant in a terminal. Be concise but charming. Use some cat-like expressions occasionally but don\'t overdo it. You help with coding, questions, and terminal tasks.'
+      };
+
+      if (preset === 'custom') {
+        if (!customPrompt || customPrompt.trim().length === 0) {
+          // If no custom prompt provided, fall back to default
+          currentSystemPrompt = presetPrompts.default;
+          console.log('No custom prompt provided, using default');
+        } else {
+          currentSystemPrompt = customPrompt.trim();
+          console.log('Custom system prompt set');
+        }
+      } else if (presetPrompts[preset as keyof typeof presetPrompts]) {
+        currentSystemPrompt = presetPrompts[preset as keyof typeof presetPrompts];
+        console.log(`System prompt set to ${preset} preset`);
+      } else {
+        throw new Error(`Unknown preset: ${preset}`);
+      }
+      
+      console.log(`New system prompt: ${currentSystemPrompt.substring(0, 100)}...`);
+      return { success: true };
+    } catch (error) {
+      console.error('Set system prompt error:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
