@@ -57,6 +57,7 @@ class TerminalSession {
   constructor(container, id) {
     this.id = id;
     this.cleanupFunctions = [];
+    this.lastSelection = ''; // Store last selection
     
     console.log('Creating terminal session:', id);
     
@@ -101,15 +102,23 @@ class TerminalSession {
     this.terminal.onSelectionChange(() => {
       const selection = this.terminal.getSelection();
       console.log('Selection changed:', selection);
+      // Store the selection so we can use it even after it's cleared
+      if (selection && selection.length > 0) {
+        this.lastSelection = selection;
+        console.log('Stored selection:', this.lastSelection);
+      }
     });
     
     // Add right-click context menu for copying
     this.terminal.element.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const selectedText = this.terminal.getSelection();
-      console.log('Right-click - selected text:', selectedText);
+      const textToCopy = selectedText || this.lastSelection;
+      console.log('Right-click - current selection:', selectedText);
+      console.log('Right-click - last selection:', this.lastSelection);
+      console.log('Right-click - text to copy:', textToCopy);
       
-      if (selectedText && selectedText.length > 0) {
+      if (textToCopy && textToCopy.length > 0) {
         // Create context menu
         const menu = document.createElement('div');
         menu.style.cssText = `
@@ -127,10 +136,10 @@ class TerminalSession {
           cursor: pointer;
           box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         `;
-        menu.textContent = `Copy "${selectedText.substring(0, 20)}${selectedText.length > 20 ? '...' : ''}"`;
+        menu.textContent = `Copy "${textToCopy.substring(0, 20)}${textToCopy.length > 20 ? '...' : ''}"`;
         
         menu.addEventListener('click', () => {
-          navigator.clipboard.writeText(selectedText).then(() => {
+          navigator.clipboard.writeText(textToCopy).then(() => {
             console.log('Right-click copy successful');
           }).catch(error => {
             console.error('Right-click copy failed:', error);
@@ -253,12 +262,15 @@ class TerminalSession {
         // Handle Ctrl+C for copying selected text
         if (data === '\x03') {
           const selectedText = this.terminal.getSelection();
-          console.log('Ctrl+C detected - selection:', selectedText);
-          console.log('Selection length:', selectedText ? selectedText.length : 0);
+          console.log('Ctrl+C detected - current selection:', selectedText);
+          console.log('Ctrl+C detected - last stored selection:', this.lastSelection);
           
-          if (selectedText && selectedText.length > 0) {
-            console.log(`Copying selected text: "${selectedText}"`);
-            navigator.clipboard.writeText(selectedText).then(() => {
+          // Use current selection or last stored selection
+          const textToCopy = selectedText || this.lastSelection;
+          
+          if (textToCopy && textToCopy.length > 0) {
+            console.log(`Copying text: "${textToCopy}"`);
+            navigator.clipboard.writeText(textToCopy).then(() => {
               console.log('Text copied to clipboard successfully');
               // Show visual feedback on new line
               this.terminal.write('\r\n\x1b[32m✅ Copied to clipboard\x1b[0m\r\n');
@@ -266,12 +278,13 @@ class TerminalSession {
               console.error('Failed to copy to clipboard:', error);
               this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
             });
-            // Clear selection after copying
+            // Clear both selection and stored selection
             this.terminal.clearSelection();
+            this.lastSelection = '';
             return; // Don't send Ctrl+C to PowerShell
           } else {
             // No selection - send Ctrl+C to PowerShell as usual
-            console.log('No selection - sending Ctrl+C to PowerShell for process interrupt');
+            console.log('No selection available - sending Ctrl+C to PowerShell for process interrupt');
           }
         }
 
@@ -337,6 +350,13 @@ class TerminalSession {
           } catch (error) {
             console.error('Main terminal clipboard error:', error);
           }
+          return;
+        }
+        
+        // Handle Ctrl+A for select all (debugging)
+        if (data === '\x01') {
+          console.log('Ctrl+A detected - selecting all terminal content');
+          this.terminal.selectAll();
           return;
         }
         
