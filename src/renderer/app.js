@@ -218,6 +218,9 @@ class TerminalSession {
       const dataCleanup = window.terminal.onData(this.id, (data) => {
         console.log(`Terminal ${this.id} received data:`, data);
         
+        // Capture output for terminal context if we have a pending command
+        this.captureCommandOutput(data);
+        
         // Write all data directly to terminal - let xterm.js handle everything
         this.terminal.write(data);
         
@@ -407,6 +410,17 @@ class TerminalSession {
             return; // Don't send to PowerShell - already handled
           }
           
+          // Handle clear commands specially - clear terminal context too
+          if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
+            this.clearTerminalContext();
+          }
+          
+          // Store command for context tracking (we'll get the output later)
+          if (trimmedCommand) {
+            this.pendingCommand = trimmedCommand;
+            this.commandStartTime = Date.now();
+          }
+          
           // Send complete command to PowerShell
           if (trimmedCommand) {
             window.terminal.write(this.id, trimmedCommand + '\r');
@@ -573,7 +587,7 @@ class TerminalSession {
   }
 
   /**
-   * Handle /cat command - now with real AI streaming!
+   * Handle /cat command - now with real AI streaming and terminal context!
    */
   async handleCatAsk(prompt) {
     this.terminal.write(`\r\n\x1b[36m🐱 Asking cat: ${prompt}\x1b[0m\r\n`);
@@ -584,6 +598,16 @@ class TerminalSession {
 
     try {
       let catResponse = '';
+      
+      // Generate terminal context to enhance the AI's understanding
+      const terminalContext = this.generateAIContext();
+      
+      // Enhance the prompt with terminal context
+      let enhancedPrompt = prompt;
+      if (terminalContext) {
+        enhancedPrompt = `${terminalContext}\n\nUser Question: ${prompt}\n\nPlease provide a helpful response considering the terminal context above.`;
+        console.log('Enhanced prompt with context:', enhancedPrompt.substring(0, 200) + '...');
+      }
       
       // Set up streaming token handler
       const tokenCleanup = window.cat.onToken((token) => {
@@ -610,8 +634,8 @@ class TerminalSession {
         }
       });
       
-      // Ask the cat using the exposed API
-      const result = await window.cat.ask(prompt);
+      // Ask the cat using the exposed API with enhanced context
+      const result = await window.cat.ask(enhancedPrompt);
       
       if (!result.success) {
         // Clean up listeners on error
@@ -1100,6 +1124,221 @@ class TerminalSession {
   }
 
   /**
+   * Capture command output for terminal context
+   */
+  captureCommandOutput(data) {
+    if (!this.pendingCommand) return;
+    
+    // Accumulate output
+    this.commandOutput += data;
+    
+    // Check if this looks like a PowerShell prompt (indicating command completion)
+    // Look for patterns like "PS C:\Users\kelle> " 
+    if ((data.includes('PS ') && data.includes('> ')) || 
+        data.match(/PS\s+[^>]+>\s*$/)) {
+      // Command completed - process the accumulated output
+      this.processCompletedCommand();
+    }
+    
+    // Also check for command timeout (in case prompt detection fails)
+    if (this.commandStartTime && (Date.now() - this.commandStartTime) > 5000) {
+      // Command took longer than 5 seconds - probably completed
+      console.log('Command timeout, processing completed command');
+      this.processCompletedCommand();
+    }
+  }
+  
+  /**
+   * Process a completed command and add to terminal context
+   */
+  processCompletedCommand() {
+    if (!this.pendingCommand) return;
+    
+    // Extract just the output (remove the command echo and final prompt)
+    let output = this.commandOutput;
+    
+    // Remove the command echo at the beginning
+    const commandEcho = this.pendingCommand;
+    if (output.startsWith(commandEcho)) {
+      output = output.substring(commandEcho.length);
+    }
+    
+    // Remove the final PowerShell prompt
+    const promptRegex = /PS [^>]+>\s*$/m;
+    output = output.replace(promptRegex, '').trim();
+    
+    // Detect if this was an error
+    const isError = output.includes('CommandNotFoundException') ||
+                   output.includes('CategoryInfo') ||
+                   output.includes('FullyQualifiedErrorId') ||
+                   output.toLowerCase().includes('error') ||
+                   output.toLowerCase().includes('exception');
+    
+    // Add to terminal context
+    this.addToTerminalContext(this.pendingCommand, output, isError);
+    
+    // Reset pending command state
+    this.pendingCommand = null;
+    this.commandOutput = '';
+    this.commandStartTime = null;
+  }
+
+  /**
+   * Add command to terminal context for AI integration
+   */
+  addToTerminalContext(command, output = '', isError = false) {
+    // Safety check - initialize if needed
+    if (!this.terminalContext) {
+      console.log('WARNING: terminalContext not initialized in addToTerminalContext, creating default');
+      this.terminalContext = {
+        recentCommands: [],
+        currentDirectory: 'C:\\Users\\kelle',
+        lastError: null,
+        maxCommands: 10
+      };
+    }
+    
+    const contextEntry = {
+      command: command.trim(),
+      output: this.filterSensitiveOutput(output),
+      isError: isError,
+      timestamp: new Date(),
+      directory: this.terminalContext.currentDirectory
+    };
+    
+    // Add to recent commands
+    this.terminalContext.recentCommands.push(contextEntry);
+    
+    // Keep only the last N commands to avoid token limits
+    if (this.terminalContext.recentCommands.length > this.terminalContext.maxCommands) {
+      this.terminalContext.recentCommands.shift();
+    }
+    
+    // Update current directory if it's a directory change command
+    this.updateCurrentDirectory(command, output);
+    
+    // Track last error for quick reference
+    if (isError) {
+      this.terminalContext.lastError = contextEntry;
+    }
+    
+    console.log('Added to terminal context:', contextEntry.command);
+  }
+  
+  /**
+   * Filter sensitive information from command output
+   */
+  filterSensitiveOutput(output) {
+    if (!output) return '';
+    
+    // Truncate very long output to avoid token limits
+    const maxOutputLength = 500;
+    let filtered = output.length > maxOutputLength 
+      ? output.substring(0, maxOutputLength) + '\n[... output truncated ...]'
+      : output;
+    
+    // Remove potential sensitive patterns
+    filtered = filtered
+      // Remove potential API keys (long alphanumeric strings)
+      .replace(/[A-Za-z0-9]{32,}/g, '[REDACTED_KEY]')
+      // Remove potential passwords in URLs
+      .replace(/:\/\/[^:]+:[^@]+@/g, '://[REDACTED]@')
+      // Remove Windows-style paths that might contain sensitive info
+      .replace(/C:\\Users\\[^\\]+\\AppData\\[^\s]*/g, '[USER_APPDATA]');
+    
+    return filtered.trim();
+  }
+  
+  /**
+   * Update current directory based on command execution
+   */
+  updateCurrentDirectory(command, output) {
+    const cmd = command.trim().toLowerCase();
+    
+    // Handle cd commands
+    if (cmd.startsWith('cd ') || cmd === 'cd') {
+      if (cmd === 'cd' || cmd === 'cd ~') {
+        // cd without args goes to home directory
+        this.terminalContext.currentDirectory = 'C:\\Users\\kelle';
+      } else {
+        const path = command.substring(3).trim();
+        // For simplicity, just track the path they tried to cd to
+        // In a full implementation, we'd resolve relative paths
+        this.terminalContext.currentDirectory = path;
+      }
+    }
+    
+    // Handle pwd command output to get actual current directory
+    if (cmd === 'pwd' && output) {
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.includes('Path') && !trimmed.includes('---')) {
+          this.terminalContext.currentDirectory = trimmed;
+          break;
+        }
+      }
+    }
+  }
+  
+  /**
+   * Clear terminal context (called when terminal is cleared)
+   */
+  clearTerminalContext() {
+    // Safety check - initialize if needed
+    if (!this.terminalContext) {
+      this.terminalContext = {
+        recentCommands: [],
+        currentDirectory: 'C:\\Users\\kelle',
+        lastError: null,
+        maxCommands: 10
+      };
+    } else {
+      this.terminalContext.recentCommands = [];
+      this.terminalContext.lastError = null;
+    }
+    console.log('Terminal context cleared');
+  }
+  
+  /**
+   * Generate context string for AI requests
+   */
+  generateAIContext() {
+    // Safety check - initialize if needed
+    if (!this.terminalContext) {
+      console.log('WARNING: terminalContext not initialized, creating default');
+      this.terminalContext = {
+        recentCommands: [],
+        currentDirectory: 'C:\\Users\\kelle',
+        lastError: null,
+        maxCommands: 10
+      };
+    }
+    
+    if (this.terminalContext.recentCommands.length === 0) {
+      return '';
+    }
+    
+    let context = `Terminal Context:\nCurrent Directory: ${this.terminalContext.currentDirectory}\n\nRecent Commands:\n`;
+    
+    // Add recent commands in reverse order (most recent first)
+    const recentCommands = this.terminalContext.recentCommands.slice(-5); // Last 5 commands
+    for (let i = recentCommands.length - 1; i >= 0; i--) {
+      const entry = recentCommands[i];
+      context += `$ ${entry.command}\n`;
+      if (entry.output) {
+        context += entry.output + '\n';
+      }
+      if (entry.isError) {
+        context += '[ERROR]\n';
+      }
+      context += '\n';
+    }
+    
+    return context;
+  }
+
+  /**
    * Add command to appropriate history
    */
   addToHistory(command) {
@@ -1177,6 +1416,19 @@ class CatTerminalApp {
     this.currentHistoryIndex = -1;
     this.originalCommand = '';
     this.isNavigatingHistory = false;
+    
+    // Terminal context for AI integration
+    this.terminalContext = {
+      recentCommands: [],           // Recent commands with outputs
+      currentDirectory: 'C:\\Users\\kelle', // Current working directory
+      lastError: null,              // Most recent error for context
+      maxCommands: 10               // Maximum commands to keep in context
+    };
+    
+    // Command output tracking
+    this.pendingCommand = null;     // Command waiting for output
+    this.commandOutput = '';        // Accumulated output for current command
+    this.commandStartTime = null;   // When command started executing
     
     this.init();
   }

@@ -104,8 +104,8 @@
 - **Provider Routing** - :nitro (speed), :floor (price), specific provider selection
 - **Working PowerShell Terminal** - Full integration with backspace/clear fixes
 
-#### ✅ **COMPLETED: System Prompt Customization (2h)**
-**Goal:** Allow users to customize the cat's personality and behavior ✅ COMPLETE
+#### ✅ **COMPLETED: Phase 6 Enhanced Features & UX (100%)**
+**Goal:** Add power-user features and improve overall experience ✅ COMPLETE
 
 **What users have working:**
 1. **✅ DONE:** Terminal with PowerShell integration  
@@ -115,15 +115,21 @@
 5. **✅ DONE:** Real OpenRouter API key storage with `/setup` commands
 6. **✅ DONE:** `/help` command with command list
 7. **✅ DONE:** System prompt customization with 5 presets + custom + preview
-8. **🔥 NEXT:** Command history with up/down arrow keys (3h)
-9. **🔥 NEXT:** Fix arrow key cursor movement issues (1h)
+8. **✅ DONE:** Command history with up/down arrow keys - full navigation working
+9. **✅ DONE:** Copy/paste functionality with subtle flash feedback
+10. **✅ DONE:** Clean terminal rendering without debug clutter
 
-**After Phase 2 is 100% complete, we can choose:**
-- **Option A:** Polish & ship minimal viable product 
-- **Option B:** Add agent system (`/spawn`, `/ask` commands)
-- **Option C:** Add advanced features (autocomplete, tabs, etc.)
+#### 🎯 **NEXT PRIORITY: Choose Direction (0h)**
+**Phase 6 is 100% complete!** Time to choose next direction:
 
-**FOCUS:** Deliver a working, shippable terminal with AI cat that users can actually use daily.
+**Option A: Ship MVP (2-3h)** - Polish and package for release
+**Option B: Terminal Context Integration (3h)** - Feed terminal history to AI  
+**Option C: Agent System (15-20h)** - Multi-agent `/spawn` functionality
+
+**🎊 MAJOR MILESTONE ACHIEVED:**
+**Cat Terminal is now a fully functional, daily-use terminal with AI integration!**
+
+**FOCUS:** We have a working, shippable terminal with AI cat that users can actually use daily. Ready for next phase!
 
 ---
 
@@ -1031,6 +1037,151 @@ class CommandHistory {
 - Recently used commands appear at top
 - Favorite/pin frequently used commands
 - Command usage analytics for better suggestions
+
+---
+
+## 🔧 Phase 6: Advanced Configuration & Customization (20-25h)
+*Making everything highly configurable for power users*
+
+### 6.1 Core Configuration System (6h)
+**Create comprehensive settings architecture:**
+- `%AppData%\CatTerminal\config.json` - Main configuration file
+- JSON Schema validation with helpful error messages
+- Hot-reload configuration changes without restart
+- Settings migration system for future versions
+- Import/export configuration profiles
+
+**Configuration Categories:**
+```json
+{
+  "ui": { ... },
+  "terminal": { ... },
+  "history": { ... },
+  "ai": { ... },
+  "cat": { ... },
+  "keybindings": { ... },
+  "advanced": { ... }
+}
+```
+
+### 6.2 Visual & UX Configuration (4h)
+**Highly configurable visual feedback and behavior:**
+
+**Flash Effects:**
+- `ui.flash.enabled` - Enable/disable copy/paste flash feedback
+- `ui.flash.duration` - Flash duration in milliseconds (50-500ms)
+- `ui.flash.intensity` - Flash intensity/opacity (0.1-0.9)
+- `ui.flash.type` - "opacity", "brightness", "color", "none"
+- `ui.flash.color` - Custom flash color for "color" type
+
+**Visual Preferences:**
+- `ui.theme` - Dark/light/auto theme switching
+- `ui.transparency` - Terminal background transparency (0-100%)
+- `ui.fontFamily` - Custom terminal font family
+- `ui.fontSize` - Terminal font size (8-24px)
+- `ui.lineHeight` - Line height multiplier (1.0-2.0)
+- `ui.cursorStyle` - Block, underline, or bar cursor
+
+### 6.3 Command History Configuration (3h)
+**Flexible history management:**
+
+**History Behavior:**
+- `history.mode` - "separate", "combined", "smart"
+  - `separate`: Shell and `/` commands in different histories (current)
+  - `combined`: All commands in one unified history
+  - `smart`: Auto-detect and group by context
+- `history.maxSize` - Maximum commands to store (100-10000)
+- `history.duplicates` - "allow", "ignore", "merge"
+- `history.persistence` - Enable/disable history saving between sessions
+- `history.searchMode` - "exact", "fuzzy", "regex"
+
+**History Navigation:**
+- `history.arrowKeys` - Enable/disable up/down navigation
+- `history.ctrlR` - Enable reverse search (future feature)
+- `history.autoComplete` - Show history suggestions while typing
+
+### 6.4 Terminal Behavior Configuration (3h)
+**Fine-tune terminal behavior:**
+
+**Input Handling:**
+- `terminal.localEditing` - Enable local command editing vs direct PTY
+- `terminal.backspaceMode` - How backspace is handled
+- `terminal.pasteMode` - "direct", "filtered", "prompt"
+- `terminal.copyFormat` - "plain", "ansi", "html"
+
+**Shell Integration:**
+- `terminal.defaultShell` - Default shell profile to use
+- `terminal.shellArgs` - Custom arguments for shell initialization
+- `terminal.encoding` - Terminal encoding (utf-8, ascii, etc.)
+- `terminal.scrollback` - Scrollback buffer size
+
+### 6.5 AI & Cat Configuration (4h)
+**Comprehensive AI behavior customization:**
+
+**AI Behavior:**
+- `ai.defaultModel` - Default model for `/cat` commands
+- `ai.streamingEnabled` - Enable/disable response streaming
+- `ai.contextWindow` - How much terminal context to include
+- `ai.temperature` - AI response creativity (0.1-1.0)
+- `ai.maxTokens` - Maximum response length
+
+**Cat Personality:**
+- `cat.enabled` - Enable/disable cat overlay entirely
+- `cat.position` - "bottom-right", "bottom-left", "top-right", "top-left", "hidden"
+- `cat.opacity` - Cat overlay opacity (0.1-1.0)
+- `cat.reactions` - Enable/disable cat emotional reactions
+- `cat.messages` - Enable/disable cat dialogue
+- `cat.messageFrequency` - How often cat speaks (0-100%)
+- `cat.sleepTimeout` - Minutes before cat falls asleep
+- `cat.personality` - Default system prompt preset
+
+### 6.6 Keybinding Customization (3h)
+**Fully customizable keyboard shortcuts:**
+
+**Core Shortcuts:**
+- `keybindings.copy` - Default: "Ctrl+C"
+- `keybindings.paste` - Default: "Ctrl+V"
+- `keybindings.historyUp` - Default: "ArrowUp"
+- `keybindings.historyDown` - Default: "ArrowDown"
+- `keybindings.clear` - Default: "Ctrl+L"
+
+**Command Shortcuts:**
+- `keybindings.quickCat` - Quick cat dialog: "Ctrl+K"
+- `keybindings.newTab` - New terminal tab: "Ctrl+T"
+- `keybindings.settings` - Open settings: "Ctrl+,"
+- `keybindings.commandPalette` - Command palette: "Ctrl+Shift+P"
+
+### 6.7 Advanced Power User Features (3h)
+**Expert-level configuration options:**
+
+**Performance Tuning:**
+- `advanced.renderOptimization` - Terminal rendering optimizations
+- `advanced.memoryManagement` - History and buffer memory limits
+- `advanced.networkTimeout` - API request timeout settings
+- `advanced.debugMode` - Enable verbose logging
+
+**Integration Options:**
+- `advanced.clipboardIntegration` - System clipboard behavior
+- `advanced.shellIntegration` - How deeply to integrate with shell
+- `advanced.systemNotifications` - Enable desktop notifications
+- `advanced.fileAssociations` - Register as default terminal
+
+### 6.8 Configuration UI (4h)
+**User-friendly settings interface:**
+
+**Settings Interface:**
+- `/settings` command to open configuration GUI
+- Tabbed interface for different categories
+- Real-time preview of changes
+- Reset to defaults functionality
+- Configuration validation and error reporting
+- Export/import settings profiles
+
+**Quick Settings:**
+- `/config <setting> <value>` for command-line configuration
+- `/config list` to show current settings
+- `/config reset <category>` to reset sections
+- Auto-completion for setting names and values
 
 ---
 
