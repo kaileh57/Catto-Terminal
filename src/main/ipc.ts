@@ -6,6 +6,7 @@ import { SimpleKeyStorage } from './key-storage';
 const processManager = new ProcessManager();
 const terminalSenders = new Map<string, WebContents>();
 let currentModel = 'anthropic/claude-3.5-haiku'; // Default model
+let currentProviderPreferences: any = {}; // Provider routing preferences
 
 export function setupIpcHandlers() {
   // Handle process output
@@ -127,7 +128,10 @@ export function setupIpcHandlers() {
 
       let fullResponse = '';
       
-      await client.streamCompletion(messages, { model: currentModel }, (token) => {
+      await client.streamCompletion(messages, { 
+        model: currentModel,
+        ...currentProviderPreferences 
+      }, (token) => {
         fullResponse += token;
         // Send each token to the renderer for streaming display
         event.sender.send('cat:token', token);
@@ -143,11 +147,43 @@ export function setupIpcHandlers() {
     }
   });
 
-  // Set AI model
-  ipcMain.handle('cat:setModel', async (event, model: string) => {
+  // Set AI model with provider preferences
+  ipcMain.handle('cat:setModel', async (event, model: string, options?: {provider?: string; routing?: string}) => {
     try {
       console.log(`Setting AI model to: ${model}`);
       currentModel = model;
+      
+      // Reset provider preferences
+      currentProviderPreferences = {};
+      
+      if (options) {
+        console.log(`Model options:`, options);
+        
+        // Handle provider specification
+        if (options.provider) {
+          currentProviderPreferences.provider = {
+            order: [options.provider],
+            allow_fallbacks: true
+          };
+        }
+        
+        // Handle routing preferences (:nitro, :floor)
+        if (options.routing) {
+          if (options.routing === 'nitro') {
+            currentProviderPreferences.provider = {
+              ...currentProviderPreferences.provider,
+              sort: 'throughput'
+            };
+          } else if (options.routing === 'floor') {
+            currentProviderPreferences.provider = {
+              ...currentProviderPreferences.provider,
+              sort: 'price'
+            };
+          }
+        }
+      }
+      
+      console.log(`Provider preferences set:`, currentProviderPreferences);
       return { success: true };
     } catch (error) {
       console.error('Set model error:', error);

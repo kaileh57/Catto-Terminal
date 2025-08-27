@@ -952,6 +952,33 @@ export class CommandAutocomplete {
 - PowerShell-style history integration
 - Separate history for `/` commands vs regular shell commands
 
+### 5.5 Customizable Cat System Prompt (2h) **NEW FEATURE**
+**Allow users to customize the cat's personality and behavior:**
+- **`/setup prompt` command** to configure custom system prompt
+- **Template system** with variables for terminal context
+- **Preset personalities** (professional, casual, developer-focused, playful)
+- **Prompt validation** and preview functionality
+- **Reset to default** option
+
+### 5.6 Terminal Context Integration (3h) **NEW FEATURE**  
+**Feed terminal session context to AI for better responses:**
+- **Terminal history capture** - Last N commands and outputs
+- **Working directory awareness** - Include current path and file listings
+- **Error context** - Include recent errors and stack traces in AI requests
+- **Smart context filtering** - Remove sensitive info, focus on relevant data
+- **Context size management** - Truncate/summarize long outputs for token efficiency
+- **Toggle context sharing** - User control over privacy
+
+### 5.7 Markdown Rendering Toggle (2h) **NEW FEATURE**
+**Enhanced AI response display with optional markdown formatting:**
+- **`/toggle markdown on|off`** command to enable/disable markdown rendering
+- **Code block highlighting** with syntax highlighting for popular languages  
+- **Table rendering** for structured data responses
+- **Link formatting** (clickable URLs when possible)
+- **Bold/italic/strikethrough** text formatting support
+- **Fallback to plain text** when markdown is disabled
+- **Smart detection** - Auto-enable markdown for code-heavy responses
+
 **Implementation approach:**
 ```typescript
 // Command history management

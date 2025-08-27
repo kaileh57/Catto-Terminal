@@ -9,6 +9,7 @@ export interface OpenRouterOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  provider?: any; // OpenRouter provider preferences object
 }
 
 export class OpenRouterClient extends EventEmitter {
@@ -29,6 +30,19 @@ export class OpenRouterClient extends EventEmitter {
     const model = options.model || this.defaultModel;
     
     try {
+      const requestBody: any = {
+        model,
+        messages,
+        stream: true,
+        temperature: options.temperature || 0.7,
+        max_tokens: options.maxTokens || 2000
+      };
+
+      // Add provider preferences if specified
+      if (options.provider) {
+        requestBody.provider = options.provider;
+      }
+
       const response = await fetch(`${this.baseURL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -37,13 +51,7 @@ export class OpenRouterClient extends EventEmitter {
           'HTTP-Referer': 'https://github.com/hackclub/cat-terminal',
           'X-Title': 'Cat Terminal'
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-          temperature: options.temperature || 0.7,
-          max_tokens: options.maxTokens || 2000
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {

@@ -297,38 +297,76 @@ class CommandInterceptor {
     if (args.length === 0) {
       return {
         type: 'model-list',
-        message: 'Available models:\\n  claude-3.5-sonnet - Powerful but slower\\n  claude-3.5-haiku - Fast and efficient (default)\\n  gpt-4 - OpenAI GPT-4\\n\\nUsage: /model <model-name>'
+        message: 'Available models:\\n' +
+          '  Anthropic Models:\\n' +
+          '    haiku, claude-3.5-haiku, anthropic/claude-3.5-haiku - Fast and efficient (default)\\n' +
+          '    sonnet, claude-3.5-sonnet, anthropic/claude-3.5-sonnet - Powerful but slower\\n' +
+          '  OpenAI Models:\\n' +
+          '    gpt-4, openai/gpt-4, openai/gpt-4o - GPT-4 variants\\n' +
+          '  Meta Models:\\n' +
+          '    llama-3.1-70b, meta-llama/llama-3.1-70b-instruct\\n' +
+          '    llama-3.3-70b, meta-llama/llama-3.3-70b-instruct\\n' +
+          '  DeepSeek Models:\\n' +
+          '    deepseek-r1, deepseek/deepseek-r1\\n' +
+          '  Provider Options:\\n' +
+          '    :nitro - Prioritize speed (e.g. llama-3.1-70b:nitro)\\n' +
+          '    :floor - Prioritize lowest price (e.g. gpt-4:floor)\\n' +
+          '\\nUsage: /model <model-name> [provider] [options]\\n' +
+          'Examples:\\n' +
+          '  /model haiku\\n' +
+          '  /model anthropic/claude-3.5-sonnet\\n' +
+          '  /model gpt-4 openai\\n' +
+          '  /model llama-3.1-70b:nitro together'
       };
     }
 
-    const model = args[0].toLowerCase();
-    const validModels = [
-      'claude-3.5-sonnet',
-      'claude-3.5-haiku', 
-      'anthropic/claude-3.5-sonnet',
-      'anthropic/claude-3.5-haiku',
-      'gpt-4',
-      'openai/gpt-4'
-    ];
+    const fullInput = args.join(' ');
+    let model = args[0].toLowerCase();
+    let provider = args[1] ? args[1].toLowerCase() : null;
+    let routing = null;
 
-    // Normalize model names
-    let normalizedModel = model;
-    if (model === 'sonnet') normalizedModel = 'anthropic/claude-3.5-sonnet';
-    if (model === 'haiku') normalizedModel = 'anthropic/claude-3.5-haiku';
-    if (model === 'claude-3.5-sonnet') normalizedModel = 'anthropic/claude-3.5-sonnet';
-    if (model === 'claude-3.5-haiku') normalizedModel = 'anthropic/claude-3.5-haiku';
-    if (model === 'gpt-4') normalizedModel = 'openai/gpt-4';
+    // Handle model:routing shortcuts (e.g., llama-3.1-70b:nitro)
+    if (model.includes(':')) {
+      const [modelPart, routingPart] = model.split(':');
+      model = modelPart;
+      routing = routingPart;
+    }
 
-    if (!validModels.some(m => m.includes(normalizedModel) || normalizedModel.includes(m))) {
+    // Normalize common model shortcuts
+    const modelMappings = {
+      'haiku': 'anthropic/claude-3.5-haiku',
+      'sonnet': 'anthropic/claude-3.5-sonnet',
+      'claude-3.5-haiku': 'anthropic/claude-3.5-haiku',
+      'claude-3.5-sonnet': 'anthropic/claude-3.5-sonnet',
+      'gpt-4': 'openai/gpt-4',
+      'gpt-4o': 'openai/gpt-4o',
+      'llama-3.1-70b': 'meta-llama/llama-3.1-70b-instruct',
+      'llama-3.3-70b': 'meta-llama/llama-3.3-70b-instruct',
+      'deepseek-r1': 'deepseek/deepseek-r1'
+    };
+
+    // Apply model mapping if it exists
+    let normalizedModel = modelMappings[model] || model;
+
+    // If model already has provider format, use as-is
+    if (!normalizedModel.includes('/') && provider) {
+      // User specified provider separately
+      normalizedModel = `${provider}/${model}`;
+    }
+
+    // Validate the model format
+    if (!normalizedModel.includes('/')) {
       return {
         type: 'error',
-        message: `Invalid model: ${model}. Use /model to see available models.`
+        message: `Invalid model format: ${model}. Use provider/model format or a known shortcut. Use /model to see examples.`
       };
     }
 
     return {
       type: 'model-set',
-      model: normalizedModel
+      model: normalizedModel,
+      provider: provider,
+      routing: routing
     };
   }
 

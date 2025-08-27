@@ -37,7 +37,7 @@ const appAPI = {
 
 const catAPI = {
   ask: (prompt: string) => ipcRenderer.invoke('cat:ask', prompt),
-  setModel: (model: string) => ipcRenderer.invoke('cat:setModel', model),
+  setModel: (model: string, options?: {provider?: string; routing?: string}) => ipcRenderer.invoke('cat:setModel', model, options),
   onToken: (callback: (token: string) => void) => {
     const handler = (_: any, token: string) => callback(token);
     ipcRenderer.on('cat:token', handler);

@@ -20,7 +20,7 @@ export interface IAppAPI {
 
 export interface ICatAPI {
   ask: (prompt: string) => Promise<{success: boolean; error?: string}>;
-  setModel: (model: string) => Promise<{success: boolean; error?: string}>;
+  setModel: (model: string, options?: {provider?: string; routing?: string}) => Promise<{success: boolean; error?: string}>;
   onToken: (callback: (token: string) => void) => (() => void);
   onComplete: (callback: (response: string) => void) => (() => void);
 }

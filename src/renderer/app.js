@@ -19,8 +19,14 @@ const TERMINAL_OPTIONS = {
   // Windows-specific options for backspace handling
   windowsMode: true,
   logLevel: 'off', // Disable parsing error logs
-  rightClickSelectsWord: true, // Enable text selection with right click
-  selectionMode: 'range', // Enable proper text selection
+  // Text selection configuration
+  rightClickSelectsWord: false,
+  selectionMode: 'line', // Enable line-based selection (better than range)
+  // Enable mouse selection  
+  disableStdin: false,
+  scrollSensitivity: 1,
+  // Enable selection
+  altClickMovesCursor: false,
   theme: {
     background: '#1e1e1e',
     foreground: '#d4d4d4',
@@ -54,7 +60,7 @@ class TerminalSession {
     
     console.log('Creating terminal session:', id);
     
-    // Initialize xterm with explicit dimensions and Windows-compatible settings
+    // Initialize xterm with explicit dimensions and selection support
     this.terminal = new Terminal({
       ...TERMINAL_OPTIONS,
       theme: TERMINAL_OPTIONS.theme,
@@ -68,7 +74,9 @@ class TerminalSession {
       macOptionIsMeta: false,
       // Set scrollback and enable proper character handling
       scrollback: 1000,
-      allowProposedApi: true
+      allowProposedApi: true,
+      // Force selection to be enabled
+      selectionMode: 'line'
     });
     
     // Add fit addon
@@ -77,6 +85,74 @@ class TerminalSession {
     
     // Open terminal in container
     this.terminal.open(container);
+    
+    // Enable text selection by ensuring focus doesn't prevent it
+    this.terminal.element.addEventListener('mousedown', (e) => {
+      console.log('Mouse down on terminal');
+    });
+    
+    this.terminal.element.addEventListener('mouseup', (e) => {
+      console.log('Mouse up on terminal');
+      const selection = this.terminal.getSelection();
+      console.log('Selection after mouse up:', selection);
+    });
+    
+    // Add selection change listener  
+    this.terminal.onSelectionChange(() => {
+      const selection = this.terminal.getSelection();
+      console.log('Selection changed:', selection);
+    });
+    
+    // Add right-click context menu for copying
+    this.terminal.element.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const selectedText = this.terminal.getSelection();
+      console.log('Right-click - selected text:', selectedText);
+      
+      if (selectedText && selectedText.length > 0) {
+        // Create context menu
+        const menu = document.createElement('div');
+        menu.style.cssText = `
+          position: absolute;
+          left: ${e.pageX}px;
+          top: ${e.pageY}px;
+          background: #2d2d2d;
+          border: 1px solid #555;
+          border-radius: 4px;
+          padding: 8px;
+          color: white;
+          font-family: sans-serif;
+          font-size: 12px;
+          z-index: 1000;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        `;
+        menu.textContent = `Copy "${selectedText.substring(0, 20)}${selectedText.length > 20 ? '...' : ''}"`;
+        
+        menu.addEventListener('click', () => {
+          navigator.clipboard.writeText(selectedText).then(() => {
+            console.log('Right-click copy successful');
+          }).catch(error => {
+            console.error('Right-click copy failed:', error);
+          });
+          document.body.removeChild(menu);
+          this.terminal.clearSelection();
+        });
+        
+        // Remove menu on click elsewhere
+        const removeMenu = () => {
+          if (document.body.contains(menu)) {
+            document.body.removeChild(menu);
+          }
+          document.removeEventListener('click', removeMenu);
+        };
+        
+        document.body.appendChild(menu);
+        setTimeout(() => document.addEventListener('click', removeMenu), 100);
+      } else {
+        console.log('No text selected for right-click menu');
+      }
+    });
     
     // Wait a bit then fit the terminal properly
     setTimeout(() => {
@@ -176,21 +252,26 @@ class TerminalSession {
         
         // Handle Ctrl+C for copying selected text
         if (data === '\x03') {
-          console.log('Ctrl+C detected - checking for selection');
-          if (this.terminal.hasSelection()) {
-            const selectedText = this.terminal.getSelection();
+          const selectedText = this.terminal.getSelection();
+          console.log('Ctrl+C detected - selection:', selectedText);
+          console.log('Selection length:', selectedText ? selectedText.length : 0);
+          
+          if (selectedText && selectedText.length > 0) {
             console.log(`Copying selected text: "${selectedText}"`);
             navigator.clipboard.writeText(selectedText).then(() => {
               console.log('Text copied to clipboard successfully');
+              // Show visual feedback on new line
+              this.terminal.write('\r\n\x1b[32m✅ Copied to clipboard\x1b[0m\r\n');
             }).catch(error => {
               console.error('Failed to copy to clipboard:', error);
+              this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
             });
             // Clear selection after copying
             this.terminal.clearSelection();
-            return;
+            return; // Don't send Ctrl+C to PowerShell
           } else {
             // No selection - send Ctrl+C to PowerShell as usual
-            console.log('No selection - sending Ctrl+C to PowerShell');
+            console.log('No selection - sending Ctrl+C to PowerShell for process interrupt');
           }
         }
 
@@ -278,12 +359,11 @@ class TerminalSession {
             }
           }
           
-          // Handle clear command specially
+          // Handle clear command specially  
           if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
             this.terminal.clear(); // Clear the display
-            currentCommand = ''; // Reset buffer
-            window.terminal.write(this.id, trimmedCommand + '\r'); // Send to PowerShell
-            return;
+            currentCommand = ''; // Reset buffer  
+            return; // Don't send to PowerShell - already handled
           }
           
           // Send complete command to PowerShell
@@ -427,7 +507,7 @@ class TerminalSession {
         break;
 
       case 'model-set':
-        this.handleModelSet(commandResult.model);
+        this.handleModelSet(commandResult.model, commandResult.provider, commandResult.routing);
         break;
         
       case 'error':
@@ -613,18 +693,31 @@ class TerminalSession {
   }
 
   /**
-   * Handle /model set command
+   * Handle /model set command with provider and routing support
    */
-  async handleModelSet(model) {
-    this.terminal.write(`\r\n\x1b[36mSwitching to model: ${model}\x1b[0m\r\n`);
+  async handleModelSet(model, provider, routing) {
+    let displayText = `Switching to model: ${model}`;
+    if (provider) displayText += ` (provider: ${provider})`;
+    if (routing) displayText += ` (routing: ${routing})`;
+    
+    this.terminal.write(`\r\n\x1b[36m${displayText}\x1b[0m\r\n`);
     
     try {
-      const result = await window.cat.setModel(model);
+      const result = await window.cat.setModel(model, {
+        provider: provider,
+        routing: routing
+      });
+      
       if (result.success) {
-        this.terminal.write(`\x1b[32m✅ Model switched successfully to ${model}!\x1b[0m\r\n`);
+        this.terminal.write(`\x1b[32m✅ Model switched successfully!\x1b[0m\r\n`);
         
         if (this.catOverlay) {
-          this.catOverlay.setState('happy', `Now using ${model.includes('haiku') ? 'Haiku' : model.includes('sonnet') ? 'Sonnet' : 'GPT-4'}!`);
+          const modelName = model.includes('haiku') ? 'Haiku' : 
+                           model.includes('sonnet') ? 'Sonnet' :
+                           model.includes('gpt-4') ? 'GPT-4' :
+                           model.includes('llama') ? 'Llama' :
+                           model.includes('deepseek') ? 'DeepSeek' : 'New Model';
+          this.catOverlay.setState('happy', `Now using ${modelName}!`);
           setTimeout(() => this.catOverlay.setState('idle'), 3000);
         }
       } else {
