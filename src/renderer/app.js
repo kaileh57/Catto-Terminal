@@ -355,33 +355,67 @@ class TerminalSession {
   }
 
   /**
-   * Handle /cat command
+   * Handle /cat command - now with real AI!
    */
-  handleCatAsk(prompt) {
-    this.terminal.write(`\r\n\x1b[36mAsking cat: ${prompt}\x1b[0m\r\n`);
+  async handleCatAsk(prompt) {
+    this.terminal.write(`\r\n\x1b[36m🐱 Asking cat: ${prompt}\x1b[0m\r\n`);
     
     if (this.catOverlay) {
-      this.catOverlay.setState('thinking', 'Let me think...');
+      this.catOverlay.setState('thinking', 'Meow... thinking...');
+    }
+
+    try {
+      // Set up streaming response handling
+      const { ipcRenderer } = require('electron');
       
-      // Simulate AI response for now
-      setTimeout(() => {
-        const responses = [
-          "Meow! That's interesting...",
-          "Purr... I think you should try that!",
-          "Hiss! I don't like that idea.",
-          "*stretches* Maybe later, human.",
-          "Mrow! Good question!"
-        ];
-        const response = responses[Math.floor(Math.random() * responses.length)];
-        this.catOverlay.setState('love', response);
-        this.terminal.write(`\x1b[32mCat says: ${response}\x1b[0m\r\n`);
+      let catResponse = '';
+      
+      // Listen for streaming tokens
+      const tokenHandler = (event, token) => {
+        catResponse += token;
+        // Show the response building up in real-time in cat speech bubble
+        if (this.catOverlay) {
+          this.catOverlay.setState('love', catResponse);
+        }
+      };
+      
+      // Listen for completion
+      const completeHandler = (event, fullResponse) => {
+        this.terminal.write(`\x1b[32mCat: ${fullResponse}\x1b[0m\r\n`);
         
+        // Clean up event listeners
+        ipcRenderer.removeListener('cat:token', tokenHandler);
+        ipcRenderer.removeListener('cat:complete', completeHandler);
+        
+        // Return cat to idle after showing response for 5 seconds
+        setTimeout(() => {
+          if (this.catOverlay) {
+            this.catOverlay.setState('idle');
+          }
+        }, 5000);
+      };
+      
+      // Set up event listeners
+      ipcRenderer.on('cat:token', tokenHandler);
+      ipcRenderer.on('cat:complete', completeHandler);
+      
+      // Ask the cat
+      const result = await window.cat.ask(prompt);
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to ask cat');
+      }
+      
+    } catch (error) {
+      console.error('Cat ask error:', error);
+      this.terminal.write(`\x1b[31mCat error: ${error.message}\x1b[0m\r\n`);
+      
+      if (this.catOverlay) {
+        this.catOverlay.setState('angry', 'Grr! Something went wrong!');
         setTimeout(() => {
           this.catOverlay.setState('idle');
-        }, 5000);
-      }, 2000);
-    } else {
-      this.terminal.write(`\x1b[33mCat overlay not available\x1b[0m\r\n`);
+        }, 3000);
+      }
     }
   }
 

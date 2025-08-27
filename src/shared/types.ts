@@ -18,10 +18,15 @@ export interface IAppAPI {
   getVersion: () => Promise<string>;
 }
 
+export interface ICatAPI {
+  ask: (prompt: string) => Promise<{success: boolean; error?: string}>;
+}
+
 // Global type declarations
 declare global {
   interface Window {
     terminal: ITerminalAPI;
     app: IAppAPI;
+    cat: ICatAPI;
   }
 }

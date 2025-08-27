@@ -1,5 +1,6 @@
 import { ipcMain, WebContents } from 'electron';
 import { ProcessManager, ProcessOptions } from './process-manager';
+import { OpenRouterClient } from './openrouter-client';
 
 const processManager = new ProcessManager();
 const terminalSenders = new Map<string, WebContents>();
@@ -98,5 +99,40 @@ export function setupIpcHandlers() {
   // Get app info
   ipcMain.handle('app:getVersion', () => {
     return process.env.npm_package_version || '0.1.0';
+  });
+
+  // OpenRouter cat chat
+  ipcMain.handle('cat:ask', async (event, prompt: string) => {
+    try {
+      // For now, use mock client - will add real API key storage later
+      const client = OpenRouterClient.createMockClient();
+      
+      const messages = [
+        {
+          role: 'system' as const,
+          content: 'You are a helpful, witty cat assistant in a terminal. Be concise but charming. Use some cat-like expressions occasionally but don\'t overdo it. You help with coding, questions, and terminal tasks.'
+        },
+        {
+          role: 'user' as const,
+          content: prompt
+        }
+      ];
+
+      let fullResponse = '';
+      
+      await client.streamCompletion(messages, {}, (token) => {
+        fullResponse += token;
+        // Send each token to the renderer for streaming display
+        event.sender.send('cat:token', token);
+      });
+
+      // Send completion signal
+      event.sender.send('cat:complete', fullResponse);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Cat ask error:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 }

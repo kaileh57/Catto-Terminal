@@ -35,6 +35,11 @@ const appAPI = {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
 };
 
+const catAPI = {
+  ask: (prompt: string) => ipcRenderer.invoke('cat:ask', prompt),
+};
+
 // Expose APIs to renderer
 contextBridge.exposeInMainWorld('terminal', terminalAPI);
 contextBridge.exposeInMainWorld('app', appAPI);
+contextBridge.exposeInMainWorld('cat', catAPI);
