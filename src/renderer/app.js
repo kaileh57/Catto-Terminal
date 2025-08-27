@@ -1082,17 +1082,18 @@ class TerminalSession {
    * Flash the terminal briefly to provide visual feedback
    */
   flashTerminal() {
-    const terminalElement = this.terminal.element;
-    if (terminalElement) {
-      // Quick flash with shorter duration
-      terminalElement.style.transition = 'filter 0.05s ease';
-      terminalElement.style.filter = 'brightness(1.3)';
+    // Flash just the terminal screen content, not the whole frame
+    const screenElement = this.terminal.element?.querySelector('.xterm-screen');
+    if (screenElement) {
+      // Quick subtle flash of the text content only
+      screenElement.style.transition = 'opacity 0.05s ease';
+      screenElement.style.opacity = '0.7';
       
-      // Remove flash after 80ms for quicker feedback
+      // Return to normal after 80ms for quick subtle feedback
       setTimeout(() => {
-        terminalElement.style.filter = 'brightness(1)';
+        screenElement.style.opacity = '1';
         setTimeout(() => {
-          terminalElement.style.transition = '';
+          screenElement.style.transition = '';
         }, 50);
       }, 80);
     }
