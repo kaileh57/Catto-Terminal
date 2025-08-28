@@ -127,31 +127,44 @@ class CommandInterceptor {
     if (args.length < 2) {
       return {
         type: 'error',
-        message: 'Toggle command requires target and value. Usage: /toggle cat on|off|text'
+        message: 'Toggle command requires target and value. Usage: /toggle cat on|off|text or /toggle markdown on|off'
       };
     }
 
     const [target, value] = args;
     
-    if (target !== 'cat') {
+    if (target === 'cat') {
+      if (!['on', 'off', 'text'].includes(value.toLowerCase())) {
+        return {
+          type: 'error',
+          message: 'Invalid cat toggle value. Use: on, off, or text'
+        };
+      }
+
+      return {
+        type: 'toggle',
+        target: 'cat',
+        value: value.toLowerCase()
+      };
+    } else if (target === 'markdown') {
+      if (!['on', 'off'].includes(value.toLowerCase())) {
+        return {
+          type: 'error',
+          message: 'Invalid markdown toggle value. Use: on or off'
+        };
+      }
+
+      return {
+        type: 'toggle',
+        target: 'markdown',
+        value: value.toLowerCase()
+      };
+    } else {
       return {
         type: 'error',
-        message: 'Currently only "cat" can be toggled. Usage: /toggle cat on|off|text'
+        message: 'Invalid toggle target. Use: cat or markdown'
       };
     }
-
-    if (!['on', 'off', 'text'].includes(value.toLowerCase())) {
-      return {
-        type: 'error',
-        message: 'Invalid toggle value. Use: on, off, or text'
-      };
-    }
-
-    return {
-      type: 'toggle',
-      target: target,
-      value: value.toLowerCase()
-    };
   }
 
   /**
@@ -452,7 +465,7 @@ class CommandInterceptor {
   getHelpText(command) {
     const helpTexts = {
       cat: '/cat "question" - Ask the cat a question using AI',
-      toggle: '/toggle cat on|off|text - Toggle cat overlay visibility',
+      toggle: '/toggle cat on|off|text or /toggle markdown on|off - Toggle features',
       setup: '/setup key|prompt|status - Configure API keys, system prompts, and settings',
       model: '/model [name] - Switch AI model (haiku, sonnet, gpt-4) or list available models',
       spawn: '/spawn -n name -m model - Create a new AI agent (future)',

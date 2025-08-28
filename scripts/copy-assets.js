@@ -67,6 +67,24 @@ function copyAssets() {
       );
     }
     
+    // Copy autocomplete.js if it exists
+    const autocompletePath = path.join(__dirname, '../src/renderer/autocomplete.js');
+    if (fs.existsSync(autocompletePath)) {
+      copyFileSync(
+        autocompletePath,
+        path.join(__dirname, '../dist/renderer/autocomplete.js')
+      );
+    }
+    
+    // Copy markdown-renderer.js if it exists
+    const markdownRendererPath = path.join(__dirname, '../src/renderer/markdown-renderer.js');
+    if (fs.existsSync(markdownRendererPath)) {
+      copyFileSync(
+        markdownRendererPath,
+        path.join(__dirname, '../dist/renderer/markdown-renderer.js')
+      );
+    }
+    
     console.log('✅ Assets copied successfully');
     
   } catch (error) {

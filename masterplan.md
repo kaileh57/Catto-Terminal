@@ -986,15 +986,53 @@ export class CommandAutocomplete {
 - **Context size management** - Truncate/summarize long outputs for token efficiency
 - **Toggle context sharing** - User control over privacy
 
-### 5.7 Markdown Rendering Toggle (2h) **NEW FEATURE**
-**Enhanced AI response display with optional markdown formatting:**
-- **`/toggle markdown on|off`** command to enable/disable markdown rendering
-- **Code block highlighting** with syntax highlighting for popular languages  
-- **Table rendering** for structured data responses
-- **Link formatting** (clickable URLs when possible)
-- **Bold/italic/strikethrough** text formatting support
-- **Fallback to plain text** when markdown is disabled
-- **Smart detection** - Auto-enable markdown for code-heavy responses
+### ✅ 5.7 Markdown Rendering Toggle (2h) **COMPLETED**
+**Enhanced AI response display with optional markdown formatting - ✅ DONE:**
+- **✅ `/toggle markdown on|off`** command to enable/disable markdown rendering
+- **✅ Code block highlighting** with colored terminal backgrounds for code blocks  
+- **✅ Link formatting** with clickable-style cyan underlined URLs
+- **✅ Bold/italic/strikethrough** text formatting with ANSI escape sequences
+- **✅ Header formatting** with colored headings (H1/H2/H3)
+- **✅ List formatting** with proper bullets and numbering
+- **✅ Blockquote rendering** with styled quote markers
+- **✅ Fallback to plain text** when markdown is disabled
+- **✅ Copy functionality** preserves original markdown instead of ANSI text
+- **✅ Persistent settings** markdown preference saved between sessions
+
+### 5.8 Code Block Execution (8h) **ROADMAP ADDITION**
+**Interactive code execution from AI responses:**
+- **Run button overlay** on markdown code blocks for supported languages
+- **Language detection** - Python, JavaScript, PowerShell, bash, etc.
+- **Sandboxed execution** - Safe execution environment for code snippets
+- **Output capture** - Display execution results inline below code blocks
+- **Error handling** - Show errors and warnings in formatted output
+- **Security controls** - User confirmation for potentially dangerous operations
+- **Multi-language support** - Different interpreters/compilers per language
+- **Session isolation** - Each execution in clean environment
+- **Copy/export results** - Easy sharing of execution output
+
+**Implementation approach:**
+```typescript
+// Code execution integration
+class CodeExecutor {
+  async executeCodeBlock(language: string, code: string): Promise<ExecutionResult> {
+    const executor = this.getExecutor(language);
+    if (!executor) {
+      throw new Error(`Unsupported language: ${language}`);
+    }
+    
+    // Security validation
+    await this.validateCode(code, language);
+    
+    // Execute in sandboxed environment
+    return await executor.run(code, {
+      timeout: 30000,
+      memory_limit: '128MB',
+      network_access: false
+    });
+  }
+}
+```
 
 **Implementation approach:**
 ```typescript

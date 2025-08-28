@@ -136,11 +136,15 @@ class TerminalSession {
           cursor: pointer;
           box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         `;
-        menu.textContent = `Copy "${textToCopy.substring(0, 20)}${textToCopy.length > 20 ? '...' : ''}"`;
+        // Prioritize markdown if available and no specific selection
+        const finalTextToCopy = (!selectedText && this.lastMarkdownResponse) ? this.lastMarkdownResponse : textToCopy;
+        const isMarkdown = finalTextToCopy === this.lastMarkdownResponse;
+        
+        menu.textContent = `Copy ${isMarkdown ? 'Markdown' : `"${finalTextToCopy.substring(0, 20)}${finalTextToCopy.length > 20 ? '...' : ''}"`}`;
         
         menu.addEventListener('click', () => {
-          navigator.clipboard.writeText(textToCopy).then(() => {
-            console.log('Right-click copy successful');
+          navigator.clipboard.writeText(finalTextToCopy).then(() => {
+            console.log(`Right-click copy successful: ${isMarkdown ? 'Markdown' : 'Selected text'}`);
           }).catch(error => {
             console.error('Right-click copy failed:', error);
           });
@@ -193,6 +197,46 @@ class TerminalSession {
     this.commandInterceptor = null;
     if (window.CommandInterceptor) {
       this.commandInterceptor = new window.CommandInterceptor();
+    }
+    
+    // Create autocomplete
+    this.autocomplete = null;
+    if (window.CommandAutocomplete) {
+      this.autocomplete = new window.CommandAutocomplete(this.terminal.element);
+      // Set up autocomplete completion callback
+      this.autocomplete.onCommandComplete((commandName) => {
+        // Replace the current partial command with the completed command
+        this.replaceCurrentCommand('/' + commandName + ' ');
+      });
+    }
+    
+    // Create markdown renderer
+    this.markdownRenderer = null;
+    this.markdownEnabled = false; // Default to disabled
+    if (window.MarkdownRenderer) {
+      this.markdownRenderer = new window.MarkdownRenderer();
+      this.markdownRenderer.setEnabled(this.markdownEnabled);
+    }
+    
+    // Load markdown setting from storage
+    this.loadMarkdownSetting();
+  }
+  
+  /**
+   * Load markdown setting from storage
+   */
+  async loadMarkdownSetting() {
+    try {
+      const result = await window.keys.get('markdown-enabled');
+      if (result.success && result.key) {
+        this.markdownEnabled = result.key === 'true';
+        if (this.markdownRenderer) {
+          this.markdownRenderer.setEnabled(this.markdownEnabled);
+        }
+        console.log('Loaded markdown setting:', this.markdownEnabled);
+      }
+    } catch (error) {
+      console.log('No stored markdown setting found, using default (disabled)');
     }
   }
   
@@ -267,11 +311,24 @@ class TerminalSession {
           console.log('Ctrl+C detected - current selection:', selectedText);
           console.log('Ctrl+C detected - last stored selection:', this.lastSelection);
           
-          // Use current selection or last stored selection
+          // If we have a recent markdown response and no specific selection, copy the original markdown
+          if (!selectedText && this.lastMarkdownResponse) {
+            console.log(`Copying original markdown response: "${this.lastMarkdownResponse.substring(0, 50)}..."`);
+            navigator.clipboard.writeText(this.lastMarkdownResponse).then(() => {
+              console.log('Original markdown copied to clipboard successfully');
+              this.flashTerminal();
+            }).catch(error => {
+              console.error('Failed to copy markdown to clipboard:', error);
+              this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
+            });
+            return; // Don't send Ctrl+C to PowerShell
+          }
+          
+          // Use current selection or last stored selection for regular copy
           const textToCopy = selectedText || this.lastSelection;
           
           if (textToCopy && textToCopy.length > 0) {
-            console.log(`Copying text: "${textToCopy}"`);
+            console.log(`Copying selected text: "${textToCopy}"`);
             navigator.clipboard.writeText(textToCopy).then(() => {
               console.log('Text copied to clipboard successfully');
               // Flash the entire terminal briefly to show copy action
@@ -314,6 +371,9 @@ class TerminalSession {
             this.currentCommand = this.currentCommand.slice(0, -1);
             // Visual backspace: move cursor back, write space, move back again
             this.terminal.write('\x08 \x08');
+            
+            // Update autocomplete after backspace
+            this.updateAutocomplete();
           }
           return; // Don't send to PowerShell
         }
@@ -342,6 +402,10 @@ class TerminalSession {
           
           this.currentCommand += data;
           this.terminal.write(data); // Show character locally
+          
+          // Trigger autocomplete if this looks like a command
+          this.updateAutocomplete();
+          
           return; // Don't send to PowerShell yet
         }
         
@@ -364,6 +428,9 @@ class TerminalSession {
                 }
                 // Flash terminal to show paste action
                 this.flashTerminal();
+                
+                // Update autocomplete after paste
+                this.updateAutocomplete();
               }
             }).catch(error => {
               console.error('Main terminal clipboard access failed:', error);
@@ -381,15 +448,65 @@ class TerminalSession {
           return;
         }
         
+        // Handle Tab key for autocomplete
+        if (data === '\t') {
+          console.log('Tab pressed - checking autocomplete');
+          if (this.autocomplete && this.autocomplete.isVisible) {
+            const handled = this.autocomplete.handleKeyDown({
+              key: 'Tab',
+              preventDefault: () => {}
+            });
+            if (handled) {
+              return; // Autocomplete handled tab completion
+            }
+          }
+          // If no autocomplete, just send tab to PowerShell
+          window.terminal.write(this.id, data);
+          return;
+        }
+        
+        // Handle Escape key
+        if (data === '\x1b') {
+          console.log('Escape pressed');
+          if (this.autocomplete && this.autocomplete.isVisible) {
+            this.autocomplete.hide();
+            return; // Don't send escape to PowerShell when closing autocomplete
+          }
+          // If no autocomplete open, send escape to PowerShell
+          window.terminal.write(this.id, data);
+          return;
+        }
+        
         // Handle Enter key
         if (data === '\r') {
           console.log('Enter pressed, command:', JSON.stringify(this.currentCommand));
+          
+          // Check if autocomplete wants to handle Enter
+          if (this.autocomplete && this.autocomplete.isVisible) {
+            const handled = this.autocomplete.handleKeyDown({
+              key: 'Enter',
+              preventDefault: () => {}
+            });
+            if (handled) {
+              return; // Autocomplete handled enter for completion
+            }
+          }
+          
+          // Hide autocomplete on enter
+          if (this.autocomplete) {
+            this.autocomplete.hide();
+          }
           
           // Add command to history before processing
           this.addToHistory(this.currentCommand);
           
           // Complete the visual line
           this.terminal.write('\r\n');
+          
+          // Ensure currentCommand is defined
+          if (this.currentCommand === undefined) {
+            this.currentCommand = '';
+          }
           
           const trimmedCommand = this.currentCommand.trim();
           
@@ -406,13 +523,16 @@ class TerminalSession {
           // Handle clear command specially  
           if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
             this.terminal.clear(); // Clear the display
+            this.clearTerminalContext(); // Clear terminal context too
             this.currentCommand = ''; // Reset buffer  
+            
+            // Request fresh PowerShell prompt after clearing
+            setTimeout(() => {
+              console.log('Requesting fresh PowerShell prompt after clear');
+              window.terminal.write(this.id, '\r');
+            }, 50);
+            
             return; // Don't send to PowerShell - already handled
-          }
-          
-          // Handle clear commands specially - clear terminal context too
-          if (trimmedCommand === 'clear' || trimmedCommand === 'cls') {
-            this.clearTerminalContext();
           }
           
           // Store command for context tracking (we'll get the output later)
@@ -421,11 +541,14 @@ class TerminalSession {
             this.commandStartTime = Date.now();
           }
           
-          // Send complete command to PowerShell
+          // Send complete command to PowerShell (only if not empty)
           if (trimmedCommand) {
+            console.log(`Sending command to PowerShell: "${trimmedCommand}"`);
             window.terminal.write(this.id, trimmedCommand + '\r');
           } else {
-            window.terminal.write(this.id, '\r'); // Empty command
+            console.log('Empty command detected - sending just carriage return to get fresh prompt');
+            // Send just a carriage return to get PowerShell to show a new prompt
+            window.terminal.write(this.id, '\r');
           }
           
           this.currentCommand = ''; // Reset buffer
@@ -579,10 +702,22 @@ class TerminalSession {
         
       case 'error':
         this.terminal.write(`\r\n\x1b[31m${commandResult.message}\x1b[0m\r\n`);
+        
+        // Request fresh PowerShell prompt after error
+        setTimeout(() => {
+          console.log('Requesting fresh PowerShell prompt after error');
+          window.terminal.write(this.id, '\r');
+        }, 50);
         break;
         
       default:
         this.terminal.write(`\r\n\x1b[33mCommand not implemented yet: ${commandResult.type}\x1b[0m\r\n`);
+        
+        // Request fresh PowerShell prompt after unimplemented command
+        setTimeout(() => {
+          console.log('Requesting fresh PowerShell prompt after unimplemented command');
+          window.terminal.write(this.id, '\r');
+        }, 50);
     }
   }
 
@@ -612,17 +747,31 @@ class TerminalSession {
       // Set up streaming token handler
       const tokenCleanup = window.cat.onToken((token) => {
         catResponse += token;
-        this.terminal.write(token);
         
-        // Show the response building up in real-time in cat speech bubble
-        if (this.catOverlay) {
-          this.catOverlay.setState('love', catResponse.substring(0, 50) + (catResponse.length > 50 ? '...' : ''));
+        // For markdown mode, buffer tokens until complete
+        // For non-markdown mode, stream directly
+        if (!this.markdownEnabled) {
+          this.terminal.write(token);
         }
+        
+        // Removed cat speech bubble updates to improve latency
       });
       
       // Set up completion handler
       const completeCleanup = window.cat.onComplete((fullResponse) => {
+        // If markdown is enabled, render the accumulated response now
+        if (this.markdownEnabled && this.markdownRenderer) {
+          // Use catResponse which was accumulated during streaming to avoid duplication
+          this.renderMarkdownResponse(catResponse);
+        }
+        
         this.terminal.write(`\r\n`);
+        
+        // Request fresh PowerShell prompt after AI response
+        setTimeout(() => {
+          console.log('Requesting fresh PowerShell prompt after AI response');
+          window.terminal.write(this.id, '\r');
+        }, 100);
         
         // Clean up event listeners
         tokenCleanup();
@@ -656,6 +805,83 @@ class TerminalSession {
   }
 
   /**
+   * Render markdown response to terminal
+   * @param {string} response - The full markdown response
+   */
+  renderMarkdownResponse(response) {
+    if (!this.markdownRenderer) {
+      console.log('No markdown renderer available');
+      return;
+    }
+    
+    console.log('Rendering markdown response:', response.substring(0, 100) + '...');
+    
+    // Store original markdown for copy functionality
+    this.lastMarkdownResponse = response;
+    
+    // Convert markdown to styled plain text that works in terminal
+    const styledText = this.convertMarkdownToTerminalText(response);
+    this.terminal.write(styledText);
+  }
+  
+  /**
+   * Convert markdown to ANSI-styled terminal text
+   * @param {string} markdown - The markdown text
+   * @returns {string} - ANSI styled text for terminal
+   */
+  convertMarkdownToTerminalText(markdown) {
+    let text = markdown;
+    
+    // First handle code blocks (so they don't interfere with other formatting)
+    text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const langLabel = lang ? `[${lang}]` : '[code]';
+      const lines = code.trim().split('\n');
+      const styledLines = lines.map(line => `\x1b[42;30m ${line.padEnd(60)} \x1b[0m`);
+      return `\n\x1b[36m${langLabel}\x1b[0m\n${styledLines.join('\n')}\n`;
+    });
+    
+    // Convert headings to colored bold text (process line by line to avoid conflicts)
+    const lines = text.split('\n');
+    const processedLines = lines.map(line => {
+      if (line.startsWith('### ')) {
+        return line.replace(/^### (.+)$/, '\x1b[1;34m### $1\x1b[0m');
+      } else if (line.startsWith('## ')) {
+        return line.replace(/^## (.+)$/, '\x1b[1;36m## $1\x1b[0m');
+      } else if (line.startsWith('# ')) {
+        return line.replace(/^# (.+)$/, '\x1b[1;35m# $1\x1b[0m');
+      } else if (line.startsWith('> ')) {
+        return line.replace(/^> (.+)$/, '\x1b[90m│ $1\x1b[0m');
+      } else if (line.match(/^-+$/)) {
+        return '\x1b[90m' + '─'.repeat(40) + '\x1b[0m';
+      } else if (line.startsWith('- ')) {
+        return line.replace(/^- (.+)$/, '\x1b[33m▪\x1b[0m $1');
+      } else if (line.match(/^\d+\. /)) {
+        return line.replace(/^(\d+)\. (.+)$/, '\x1b[33m$1.\x1b[0m $2');
+      }
+      return line;
+    });
+    
+    text = processedLines.join('\n');
+    
+    // Convert bold to bright white
+    text = text.replace(/\*\*([^*]+?)\*\*/g, '\x1b[1;37m$1\x1b[0m');
+    
+    // Convert italic to dim text 
+    text = text.replace(/\*([^*]+?)\*/g, '\x1b[3m$1\x1b[0m');
+    
+    // Convert strikethrough to crossed out text
+    text = text.replace(/~~([^~]+?)~~/g, '\x1b[9;90m$1\x1b[0m');
+    
+    // Convert inline code to yellow background
+    text = text.replace(/`([^`]+)`/g, '\x1b[43;30m $1 \x1b[0m');
+    
+    // Convert links to cyan underlined text with URL shown
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '\x1b[4;36m$1\x1b[0m \x1b[90m($2)\x1b[0m');
+    
+    return text;
+  }
+
+  /**
    * Handle /toggle command
    */
   handleToggle(target, value) {
@@ -678,6 +904,39 @@ class TerminalSession {
         }
       } else {
         this.terminal.write(`\r\n\x1b[33mCat overlay not available\x1b[0m\r\n`);
+      }
+    } else if (target === 'markdown') {
+      switch (value) {
+        case 'on':
+          this.markdownEnabled = true;
+          if (this.markdownRenderer) {
+            this.markdownRenderer.setEnabled(true);
+          }
+          // Save setting persistently
+          window.keys.store('markdown-enabled', 'true');
+          this.terminal.write(`\r\n\x1b[32mMarkdown rendering enabled\x1b[0m\r\n`);
+          
+          // Request fresh prompt after toggle
+          setTimeout(() => {
+            console.log('Requesting fresh PowerShell prompt after markdown toggle');
+            window.terminal.write(this.id, '\r');
+          }, 50);
+          break;
+        case 'off':
+          this.markdownEnabled = false;
+          if (this.markdownRenderer) {
+            this.markdownRenderer.setEnabled(false);
+          }
+          // Save setting persistently
+          window.keys.store('markdown-enabled', 'false');
+          this.terminal.write(`\r\n\x1b[32mMarkdown rendering disabled\x1b[0m\r\n`);
+          
+          // Request fresh prompt after toggle
+          setTimeout(() => {
+            console.log('Requesting fresh PowerShell prompt after markdown toggle');
+            window.terminal.write(this.id, '\r');
+          }, 50);
+          break;
       }
     }
   }
@@ -1021,7 +1280,18 @@ class TerminalSession {
    * Handle arrow key input for command history navigation
    */
   handleArrowKey(data) {
-    // Determine if we're dealing with up or down arrow
+    // Check if autocomplete wants to handle this key first
+    if (this.autocomplete && this.autocomplete.isVisible) {
+      const handled = this.autocomplete.handleKeyDown({
+        key: data === '\x1b[A' ? 'ArrowUp' : data === '\x1b[B' ? 'ArrowDown' : '',
+        preventDefault: () => {}
+      });
+      if (handled) {
+        return; // Autocomplete handled it
+      }
+    }
+    
+    // Determine if we're dealing with up or down arrow for history
     if (data === '\x1b[A') { // Up arrow
       this.navigateHistoryUp();
     } else if (data === '\x1b[B') { // Down arrow  
@@ -1088,6 +1358,9 @@ class TerminalSession {
     if (newCommand) {
       this.terminal.write(newCommand);
     }
+    
+    // Update autocomplete with new command
+    this.updateAutocomplete();
   }
 
   /**
@@ -1100,6 +1373,36 @@ class TerminalSession {
       this.terminal.write('\x1b[' + this.currentCommand.length + 'D'); // Move cursor left
       this.terminal.write('\x1b[K'); // Clear from cursor to end of line
     }
+    
+    // Hide autocomplete when clearing command
+    if (this.autocomplete) {
+      this.autocomplete.hide();
+    }
+  }
+
+  /**
+   * Update autocomplete based on current command
+   */
+  updateAutocomplete() {
+    if (!this.autocomplete) return;
+    
+    // Get current cursor position for positioning
+    const rect = this.terminal.element?.getBoundingClientRect();
+    if (!rect) return;
+    
+    // Rough calculation of cursor position (this could be improved)
+    const charWidth = 9; // Approximate character width in pixels
+    const lineHeight = 17; // Approximate line height in pixels
+    const currentLine = Math.floor(this.terminal.buffer.active.cursorY);
+    const currentCol = this.terminal.buffer.active.cursorX;
+    
+    const cursorPosition = {
+      x: currentCol * charWidth,
+      y: currentLine * lineHeight
+    };
+    
+    // Show or update autocomplete
+    this.autocomplete.show(this.currentCommand, cursorPosition);
   }
 
   /**
@@ -1399,6 +1702,9 @@ class TerminalSession {
     if (this.catOverlay) {
       this.catOverlay.dispose();
     }
+    if (this.autocomplete) {
+      this.autocomplete.destroy();
+    }
   }
 }
 
@@ -1416,6 +1722,9 @@ class CatTerminalApp {
     this.currentHistoryIndex = -1;
     this.originalCommand = '';
     this.isNavigatingHistory = false;
+    
+    // Markdown storage for copy functionality
+    this.lastMarkdownResponse = '';  // Store original markdown for copying
     
     // Terminal context for AI integration
     this.terminalContext = {

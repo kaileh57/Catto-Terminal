@@ -9,7 +9,23 @@ let currentModel = 'anthropic/claude-3.5-haiku'; // Default model
 let currentProviderPreferences: any = {}; // Provider routing preferences
 let currentSystemPrompt = 'You are a helpful, witty cat assistant in a terminal. Be concise but charming. Use some cat-like expressions occasionally but don\'t overdo it. You help with coding, questions, and terminal tasks.'; // Current system prompt
 
+// Load system prompt on startup
+async function loadStoredSystemPrompt() {
+  try {
+    const storedPrompt = await SimpleKeyStorage.getAPIKey('system-prompt');
+    if (storedPrompt) {
+      currentSystemPrompt = storedPrompt;
+      console.log('Loaded stored system prompt');
+    }
+  } catch (error) {
+    console.log('No stored system prompt found, using default');
+  }
+}
+
 export function setupIpcHandlers() {
+  // Load stored system prompt
+  loadStoredSystemPrompt();
+  
   // Handle process output
   processManager.on('data', (id: string, data: string) => {
     const sender = terminalSenders.get(id);
@@ -177,6 +193,10 @@ export function setupIpcHandlers() {
         throw new Error(`Unknown preset: ${preset}`);
       }
       
+      // Store the system prompt persistently
+      await SimpleKeyStorage.storeAPIKey('system-prompt', currentSystemPrompt);
+      await SimpleKeyStorage.storeAPIKey('system-prompt-preset', preset);
+      
       console.log(`New system prompt: ${currentSystemPrompt.substring(0, 100)}...`);
       return { success: true };
     } catch (error) {
@@ -270,6 +290,20 @@ export function setupIpcHandlers() {
     try {
       const providers = await SimpleKeyStorage.listProviders();
       return { success: true, providers };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Get current system prompt status
+  ipcMain.handle('cat:getSystemPromptStatus', async (event) => {
+    try {
+      const storedPreset = await SimpleKeyStorage.getAPIKey('system-prompt-preset');
+      return { 
+        success: true, 
+        currentPrompt: currentSystemPrompt.substring(0, 100) + (currentSystemPrompt.length > 100 ? '...' : ''),
+        preset: storedPreset || 'default'
+      };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
