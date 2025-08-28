@@ -109,16 +109,80 @@ class TerminalSession {
       }
     });
     
-    // Add right-click context menu for copying
+    // Add click handler for markdown links
+    this.terminal.element.addEventListener('click', (event) => {
+      // Get clicked position
+      const rect = this.terminal.element.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      
+      // Convert to terminal coordinates
+      const cols = this.terminal.cols;
+      const rows = this.terminal.rows;
+      const cellWidth = rect.width / cols;
+      const cellHeight = rect.height / rows;
+      
+      const col = Math.floor(x / cellWidth);
+      const row = Math.floor(y / cellHeight);
+      
+      // Get the line text
+      const buffer = this.terminal.buffer.active;
+      if (row >= 0 && row < buffer.length) {
+        const line = buffer.getLine(row);
+        if (line) {
+          const lineText = line.translateToString();
+          
+          // Look for hidden link markers ◉url◉
+          const linkMatch = lineText.match(/◉([^◉]+)◉/);
+          if (linkMatch) {
+            const url = linkMatch[1];
+            console.log('Clicked on link:', url);
+            
+            // Open the URL using electronAPI
+            if (window.electronAPI && window.electronAPI.shell) {
+              window.electronAPI.shell.openExternal(url).then(() => {
+                console.log('Successfully opened link:', url);
+              }).catch(error => {
+                console.error('Failed to open link:', error);
+              });
+            } else {
+              console.error('electronAPI.shell not available');
+            }
+            
+            event.preventDefault();
+            return;
+          }
+          
+          // Fallback: Look for regular URLs
+          const urlMatch = lineText.match(/(https?:\/\/[^\s\)]+)/);
+          if (urlMatch) {
+            const url = urlMatch[1];
+            const urlStart = lineText.indexOf(url);
+            const urlEnd = urlStart + url.length;
+            
+            if (col >= urlStart && col <= urlEnd) {
+              console.log('Clicked on URL:', url);
+              if (window.electronAPI && window.electronAPI.shell) {
+                window.electronAPI.shell.openExternal(url);
+              }
+              event.preventDefault();
+            }
+          }
+        }
+      }
+    });
+    
+    // Add right-click context menu for copying selected text only
     this.terminal.element.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const selectedText = this.terminal.getSelection();
-      const textToCopy = selectedText || this.lastSelection;
-      console.log('Right-click - current selection:', selectedText);
-      console.log('Right-click - last selection:', this.lastSelection);
-      console.log('Right-click - text to copy:', textToCopy);
+      const xtermSelection = this.terminal.getSelection();
+      const browserSelection = window.getSelection().toString();
+      const selectedText = xtermSelection || browserSelection;
+      console.log('Right-click - xterm selection:', xtermSelection);
+      console.log('Right-click - browser selection:', browserSelection);
+      console.log('Right-click - final selection:', selectedText);
       
-      if (textToCopy && textToCopy.length > 0) {
+      if (selectedText && selectedText.trim().length > 0) {
         // Create context menu
         const menu = document.createElement('div');
         menu.style.cssText = `
@@ -136,15 +200,13 @@ class TerminalSession {
           cursor: pointer;
           box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         `;
-        // Prioritize markdown if available and no specific selection
-        const finalTextToCopy = (!selectedText && this.lastMarkdownResponse) ? this.lastMarkdownResponse : textToCopy;
-        const isMarkdown = finalTextToCopy === this.lastMarkdownResponse;
-        
-        menu.textContent = `Copy ${isMarkdown ? 'Markdown' : `"${finalTextToCopy.substring(0, 20)}${finalTextToCopy.length > 20 ? '...' : ''}"`}`;
+        // Only copy the selected text
+        const preview = selectedText.substring(0, 20) + (selectedText.length > 20 ? '...' : '');
+        menu.textContent = `Copy "${preview}"`;
         
         menu.addEventListener('click', () => {
-          navigator.clipboard.writeText(finalTextToCopy).then(() => {
-            console.log(`Right-click copy successful: ${isMarkdown ? 'Markdown' : 'Selected text'}`);
+          navigator.clipboard.writeText(selectedText).then(() => {
+            console.log('Right-click copy successful: Selected text');
           }).catch(error => {
             console.error('Right-click copy failed:', error);
           });
@@ -305,45 +367,36 @@ class TerminalSession {
           return this.handlePromptInput(data);
         }
         
-        // Handle Ctrl+C for copying selected text
+        // Handle Ctrl+C for copying selected text only
         if (data === '\x03') {
-          const selectedText = this.terminal.getSelection();
-          console.log('Ctrl+C detected - current selection:', selectedText);
-          console.log('Ctrl+C detected - last stored selection:', this.lastSelection);
+          // Try both xterm selection and browser selection
+          const xtermSelection = this.terminal.getSelection();
+          const browserSelection = window.getSelection().toString();
+          const selectedText = xtermSelection || browserSelection;
           
-          // If we have a recent markdown response and no specific selection, copy the original markdown
-          if (!selectedText && this.lastMarkdownResponse) {
-            console.log(`Copying original markdown response: "${this.lastMarkdownResponse.substring(0, 50)}..."`);
-            navigator.clipboard.writeText(this.lastMarkdownResponse).then(() => {
-              console.log('Original markdown copied to clipboard successfully');
-              this.flashTerminal();
-            }).catch(error => {
-              console.error('Failed to copy markdown to clipboard:', error);
-              this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
-            });
-            return; // Don't send Ctrl+C to PowerShell
-          }
+          console.log('Ctrl+C detected - xterm selection:', xtermSelection);
+          console.log('Ctrl+C detected - browser selection:', browserSelection);
+          console.log('Ctrl+C detected - final selection:', selectedText);
           
-          // Use current selection or last stored selection for regular copy
-          const textToCopy = selectedText || this.lastSelection;
-          
-          if (textToCopy && textToCopy.length > 0) {
-            console.log(`Copying selected text: "${textToCopy}"`);
-            navigator.clipboard.writeText(textToCopy).then(() => {
+          // Only copy if there's actually selected text
+          if (selectedText && selectedText.trim().length > 0) {
+            console.log(`Copying selected text: "${selectedText}"`);
+            navigator.clipboard.writeText(selectedText).then(() => {
               console.log('Text copied to clipboard successfully');
-              // Flash the entire terminal briefly to show copy action
+              // Flash the terminal briefly to show copy action
               this.flashTerminal();
             }).catch(error => {
               console.error('Failed to copy to clipboard:', error);
               this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
             });
-            // Clear both selection and stored selection
+            // Clear both selections after copying
             this.terminal.clearSelection();
-            this.lastSelection = '';
+            window.getSelection().removeAllRanges();
             return; // Don't send Ctrl+C to PowerShell
           } else {
-            // No selection - send Ctrl+C to PowerShell as usual
+            // No selection - send Ctrl+C to PowerShell for process interrupt
             console.log('No selection available - sending Ctrl+C to PowerShell for process interrupt');
+            // Let it fall through to send to PowerShell
           }
         }
 
@@ -840,15 +893,15 @@ class TerminalSession {
       return `\n\x1b[36m${langLabel}\x1b[0m\n${styledLines.join('\n')}\n`;
     });
     
-    // Convert headings to colored bold text (process line by line to avoid conflicts)
+    // Convert headings to colored bold text WITHOUT markdown syntax
     const lines = text.split('\n');
     const processedLines = lines.map(line => {
       if (line.startsWith('### ')) {
-        return line.replace(/^### (.+)$/, '\x1b[1;34m### $1\x1b[0m');
+        return line.replace(/^### (.+)$/, '\x1b[1;34m▶ $1\x1b[0m');
       } else if (line.startsWith('## ')) {
-        return line.replace(/^## (.+)$/, '\x1b[1;36m## $1\x1b[0m');
+        return line.replace(/^## (.+)$/, '\x1b[1;36m══ $1 ══\x1b[0m');
       } else if (line.startsWith('# ')) {
-        return line.replace(/^# (.+)$/, '\x1b[1;35m# $1\x1b[0m');
+        return line.replace(/^# (.+)$/, '\x1b[1;35m▓▓ $1 ▓▓\x1b[0m');
       } else if (line.startsWith('> ')) {
         return line.replace(/^> (.+)$/, '\x1b[90m│ $1\x1b[0m');
       } else if (line.match(/^-+$/)) {
@@ -875,8 +928,15 @@ class TerminalSession {
     // Convert inline code to yellow background
     text = text.replace(/`([^`]+)`/g, '\x1b[43;30m $1 \x1b[0m');
     
-    // Convert links to cyan underlined text with URL shown
-    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '\x1b[4;36m$1\x1b[0m \x1b[90m($2)\x1b[0m');
+    // Convert links to clickable format and store them
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+      // Store URL for click handling with a hidden marker
+      if (!this.clickableLinks) this.clickableLinks = new Map();
+      const linkId = `◉${url}◉`; // Use special characters that are unlikely to appear in normal text
+      this.clickableLinks.set(url, linkText);
+      // Return just the colored link text with a hidden marker at the end
+      return `\x1b[4;36m${linkText}\x1b[0m\x1b[8m${linkId}\x1b[0m`; // \x1b[8m makes text invisible
+    });
     
     return text;
   }

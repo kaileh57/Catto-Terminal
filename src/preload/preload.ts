@@ -60,8 +60,13 @@ const keysAPI = {
   list: () => ipcRenderer.invoke('keys:list'),
 };
 
+const shellAPI = {
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+};
+
 // Expose APIs to renderer
 contextBridge.exposeInMainWorld('terminal', terminalAPI);
 contextBridge.exposeInMainWorld('app', appAPI);
 contextBridge.exposeInMainWorld('cat', catAPI);
 contextBridge.exposeInMainWorld('keys', keysAPI);
+contextBridge.exposeInMainWorld('electronAPI', { shell: shellAPI });

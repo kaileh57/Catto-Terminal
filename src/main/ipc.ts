@@ -1,4 +1,4 @@
-import { ipcMain, WebContents } from 'electron';
+import { ipcMain, WebContents, shell } from 'electron';
 import { ProcessManager, ProcessOptions } from './process-manager';
 import { OpenRouterClient } from './openrouter-client';
 import { SimpleKeyStorage } from './key-storage';
@@ -305,6 +305,17 @@ export function setupIpcHandlers() {
         preset: storedPreset || 'default'
       };
     } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Shell API handlers
+  ipcMain.handle('shell:openExternal', async (event, url: string) => {
+    try {
+      await shell.openExternal(url);
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to open external URL:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
