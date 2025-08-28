@@ -109,67 +109,66 @@ class TerminalSession {
       }
     });
     
-    // Add click handler for markdown links
+    // Add click handler for markdown links - simplified approach
     this.terminal.element.addEventListener('click', (event) => {
-      // Get clicked position
-      const rect = this.terminal.element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+      console.log('Click detected on terminal');
       
-      // Convert to terminal coordinates
-      const cols = this.terminal.cols;
-      const rows = this.terminal.rows;
-      const cellWidth = rect.width / cols;
-      const cellHeight = rect.height / rows;
-      
-      const col = Math.floor(x / cellWidth);
-      const row = Math.floor(y / cellHeight);
-      
-      // Get the line text
+      // Get all visible lines and search for link markers
       const buffer = this.terminal.buffer.active;
-      if (row >= 0 && row < buffer.length) {
-        const line = buffer.getLine(row);
-        if (line) {
-          const lineText = line.translateToString();
-          
-          // Look for hidden link markers ◉url◉
-          const linkMatch = lineText.match(/◉([^◉]+)◉/);
-          if (linkMatch) {
-            const url = linkMatch[1];
-            console.log('Clicked on link:', url);
+      const viewportY = this.terminal.buffer.active.viewportY;
+      const rows = this.terminal.rows;
+      
+      // Check all visible lines for links
+      for (let i = 0; i < rows; i++) {
+        const lineIndex = viewportY + i;
+        if (lineIndex >= 0 && lineIndex < buffer.length) {
+          const line = buffer.getLine(lineIndex);
+          if (line) {
+            const lineText = line.translateToString();
             
-            // Open the URL using electronAPI
-            if (window.electronAPI && window.electronAPI.shell) {
-              window.electronAPI.shell.openExternal(url).then(() => {
-                console.log('Successfully opened link:', url);
-              }).catch(error => {
-                console.error('Failed to open link:', error);
-              });
-            } else {
-              console.error('electronAPI.shell not available');
-            }
-            
-            event.preventDefault();
-            return;
-          }
-          
-          // Fallback: Look for regular URLs
-          const urlMatch = lineText.match(/(https?:\/\/[^\s\)]+)/);
-          if (urlMatch) {
-            const url = urlMatch[1];
-            const urlStart = lineText.indexOf(url);
-            const urlEnd = urlStart + url.length;
-            
-            if (col >= urlStart && col <= urlEnd) {
-              console.log('Clicked on URL:', url);
-              if (window.electronAPI && window.electronAPI.shell) {
-                window.electronAPI.shell.openExternal(url);
+            // If this line contains a link marker, check if it was clicked
+            const linkMatch = lineText.match(/◉([^◉]+)◉/);
+            if (linkMatch) {
+              const url = linkMatch[1];
+              
+              // Simple approach: if there's a link in any visible line and user clicked,
+              // check if click was roughly in the terminal area and open the link
+              const rect = this.terminal.element.getBoundingClientRect();
+              const clickX = event.clientX - rect.left;
+              const clickY = event.clientY - rect.top;
+              
+              // If click is within terminal bounds, open the link
+              if (clickX >= 0 && clickX <= rect.width && clickY >= 0 && clickY <= rect.height) {
+                console.log('Found clickable link:', url);
+                console.log('Click position:', clickX, clickY);
+                
+                // Open the URL using electronAPI
+                if (window.electronAPI && window.electronAPI.shell) {
+                  window.electronAPI.shell.openExternal(url).then(() => {
+                    console.log('Successfully opened link:', url);
+                    // Show feedback in terminal
+                    this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
+                    // Request fresh prompt
+                    setTimeout(() => {
+                      window.terminal.write(this.id, '\r');
+                    }, 100);
+                  }).catch(error => {
+                    console.error('Failed to open link:', error);
+                    this.terminal.write(`\r\n\x1b[31m❌ Failed to open link\x1b[0m\r\n`);
+                  });
+                } else {
+                  console.error('electronAPI.shell not available');
+                }
+                
+                event.preventDefault();
+                return;
               }
-              event.preventDefault();
             }
           }
         }
       }
+      
+      console.log('No clickable links found');
     });
     
     // Add right-click context menu for copying selected text only
@@ -369,19 +368,23 @@ class TerminalSession {
         
         // Handle Ctrl+C for copying selected text only
         if (data === '\x03') {
-          // Try both xterm selection and browser selection
+          // Try multiple ways to get selected text
           const xtermSelection = this.terminal.getSelection();
           const browserSelection = window.getSelection().toString();
-          const selectedText = xtermSelection || browserSelection;
+          const storedSelection = this.lastSelection; // From our selection tracking
           
-          console.log('Ctrl+C detected - xterm selection:', xtermSelection);
-          console.log('Ctrl+C detected - browser selection:', browserSelection);
-          console.log('Ctrl+C detected - final selection:', selectedText);
+          // Use any available selection
+          const selectedText = xtermSelection || browserSelection || storedSelection;
+          
+          console.log('Ctrl+C detected - xterm selection:', JSON.stringify(xtermSelection));
+          console.log('Ctrl+C detected - browser selection:', JSON.stringify(browserSelection));
+          console.log('Ctrl+C detected - stored selection:', JSON.stringify(storedSelection));
+          console.log('Ctrl+C detected - final selection:', JSON.stringify(selectedText));
           
           // Only copy if there's actually selected text
           if (selectedText && selectedText.trim().length > 0) {
             console.log(`Copying selected text: "${selectedText}"`);
-            navigator.clipboard.writeText(selectedText).then(() => {
+            navigator.clipboard.writeText(selectedText.trim()).then(() => {
               console.log('Text copied to clipboard successfully');
               // Flash the terminal briefly to show copy action
               this.flashTerminal();
@@ -389,9 +392,10 @@ class TerminalSession {
               console.error('Failed to copy to clipboard:', error);
               this.terminal.write('\r\n\x1b[31m❌ Copy failed\x1b[0m\r\n');
             });
-            // Clear both selections after copying
+            // Clear all selections after copying
             this.terminal.clearSelection();
             window.getSelection().removeAllRanges();
+            this.lastSelection = '';
             return; // Don't send Ctrl+C to PowerShell
           } else {
             // No selection - send Ctrl+C to PowerShell for process interrupt
@@ -885,6 +889,9 @@ class TerminalSession {
   convertMarkdownToTerminalText(markdown) {
     let text = markdown;
     
+    // Preprocessor: Clean up any stray ANSI codes or artifacts
+    text = this.cleanupText(text);
+    
     // First handle code blocks (so they don't interfere with other formatting)
     text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
       const langLabel = lang ? `[${lang}]` : '[code]';
@@ -937,6 +944,28 @@ class TerminalSession {
       // Return just the colored link text with a hidden marker at the end
       return `\x1b[4;36m${linkText}\x1b[0m\x1b[8m${linkId}\x1b[0m`; // \x1b[8m makes text invisible
     });
+    
+    return text;
+  }
+  
+  /**
+   * Clean up text by removing stray ANSI codes and other artifacts
+   * @param {string} text 
+   * @returns {string}
+   */
+  cleanupText(text) {
+    // Remove any stray ANSI codes that might appear (like 1;35m before headings)
+    text = text.replace(/\d+;\d+m/g, '');
+    text = text.replace(/\x1b\[\d+;\d+m/g, ''); // Also remove properly formatted ones that are orphaned
+    text = text.replace(/\x1b\[\d+m/g, ''); // Single parameter ANSI codes
+    text = text.replace(/\x1b\[m/g, ''); // Reset codes
+    text = text.replace(/\x1b\[0m/g, ''); // Explicit reset codes
+    
+    // Remove any other control characters except newlines and carriage returns
+    text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+    
+    // Clean up multiple consecutive spaces
+    text = text.replace(/  +/g, ' ');
     
     return text;
   }
