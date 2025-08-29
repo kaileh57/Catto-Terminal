@@ -84,8 +84,32 @@ class TerminalSession {
     this.fitAddon = new FitAddon.FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     
-    // Initialize clickable links system
-    this.clickableLinks = new Map();
+    // Add WebLinksAddon for clickable links
+    try {
+      // Try different possible constructors for WebLinksAddon
+      if (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) {
+        this.webLinksAddon = new WebLinksAddon.WebLinksAddon((event, url) => {
+          console.log('🔗 WebLinksAddon clicked URL:', url);
+          this.openExternalUrl(url);
+        });
+      } else if (window.WebLinksAddon) {
+        this.webLinksAddon = new WebLinksAddon((event, url) => {
+          console.log('🔗 WebLinksAddon clicked URL:', url);
+          this.openExternalUrl(url);
+        });
+      } else {
+        throw new Error('WebLinksAddon not found');
+      }
+      
+      this.terminal.loadAddon(this.webLinksAddon);
+      console.log('✅ WebLinksAddon loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load WebLinksAddon:', error);
+      console.log('Available WebLinksAddon properties:', Object.keys(window.WebLinksAddon || {}));
+      
+      // Fallback: Add simple manual click detection
+      this.addSimpleClickHandler();
+    }
     
     // Open terminal in container
     this.terminal.open(container);
@@ -112,81 +136,7 @@ class TerminalSession {
       }
     });
     
-    // Add click handler for links
-    this.terminal.element.addEventListener('click', (event) => {
-      console.log('Click detected on terminal');
-      
-      // Get clicked position
-      const rect = this.terminal.element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      
-      // Convert to terminal coordinates
-      const cols = this.terminal.cols;
-      const rows = this.terminal.rows;
-      const cellWidth = rect.width / cols;
-      const cellHeight = rect.height / rows;
-      
-      const col = Math.floor(x / cellWidth);
-      const row = Math.floor(y / cellHeight);
-      
-      // Get the line text
-      const buffer = this.terminal.buffer.active;
-      if (row >= 0 && row < buffer.length) {
-        const line = buffer.getLine(row);
-        if (line) {
-          const lineText = line.translateToString();
-          console.log('Clicked line text:', lineText);
-          
-          // Look for URLs in the line and check if click was on the URL part
-          const urlMatch = lineText.match(/(https?:\/\/[^\s\)>\]]+)/);
-          if (urlMatch) {
-            const url = urlMatch[1];
-            const urlStart = lineText.indexOf(url);
-            const urlEnd = urlStart + url.length;
-            
-            console.log(`Click at col ${col}, URL "${url}" at ${urlStart}-${urlEnd}`);
-            
-            // Only open if clicked specifically on the URL part (give some margin)
-            if (col >= urlStart - 3 && col <= urlEnd + 3) {
-              console.log('Clicked directly on URL:', url);
-              
-              // Try multiple ways to open the URL
-              let opened = false;
-              
-              // Method 1: Try electronAPI.shell
-              if (window.electronAPI && window.electronAPI.shell) {
-                try {
-                  window.electronAPI.shell.openExternal(url).then(() => {
-                    console.log('Successfully opened link via electronAPI:', url);
-                    this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
-                    setTimeout(() => {
-                      window.terminal.write(this.id, '\r');
-                    }, 100);
-                    opened = true;
-                  }).catch(error => {
-                    console.error('electronAPI.shell failed:', error);
-                    // Try fallback method
-                    this.tryFallbackLinkOpen(url);
-                  });
-                } catch (error) {
-                  console.error('electronAPI.shell error:', error);
-                  this.tryFallbackLinkOpen(url);
-                }
-              } else {
-                console.warn('electronAPI.shell not available, trying fallback');
-                this.tryFallbackLinkOpen(url);
-              }
-              
-              event.preventDefault();
-              return;
-            } else {
-              console.log('Click was not on URL part, ignoring');
-            }
-          }
-        }
-      }
-    });
+    // Simplified click handler - scan ALL visible lines for URLs
     
     // Add right-click context menu for copying selected text only
     this.terminal.element.addEventListener('contextmenu', (e) => {
@@ -903,8 +853,9 @@ class TerminalSession {
     this.aiResponseStartRow = this.terminal.buffer.active.cursorY + this.terminal.buffer.active.baseY;
     
     // NUCLEAR cleanup - remove ALL ANSI artifacts BEFORE processing
-    const cleanedResponse = this.cleanupText(response);
-    console.log('After nuclear cleanup:', cleanedResponse.substring(0, 100));
+    const nuked = this.nuclearPreprocessor(response);
+    const cleanedResponse = this.cleanupText(nuked);
+    console.log('After NUCLEAR cleanup:', cleanedResponse.substring(0, 100));
     
     // Convert markdown to styled plain text that works in terminal
     const styledText = this.convertMarkdownToTerminalText(cleanedResponse);
@@ -970,10 +921,10 @@ class TerminalSession {
     // Convert inline code to yellow background
     text = text.replace(/`([^`]+)`/g, '\x1b[43;30m $1 \x1b[0m');
     
-    // Convert links back to simple colored format that works with our click handler
+    // Convert links to format that WebLinksAddon can detect
     text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
-      // Simple format: colored link text followed by the actual URL for clicking
-      return `\x1b[36m${linkText}\x1b[0m \x1b[90m->\x1b[0m \x1b[4;94m${url}\x1b[0m`;
+      // Format: LinkText -> URL (WebLinksAddon will auto-detect the URL part)
+      return `\x1b[36m${linkText}\x1b[0m \x1b[90m->\x1b[0m ${url}`;
     });
     
     // No final cleanup needed - the initial cleanupText call handles all stray codes
@@ -983,69 +934,148 @@ class TerminalSession {
   }
   
   /**
-   * Clean up text by removing stray ANSI codes and other artifacts
-   * This function is designed to clean markdown text BEFORE processing
+   * Clean up text by removing only problematic ANSI artifacts
+   * This function preserves legitimate ANSI escape sequences for formatting
    * @param {string} text 
    * @returns {string}
    */
   cleanupText(text) {
     console.log('Before cleanup:', text.substring(0, 100));
     
-    // SUPER AGGRESSIVE cleanup - remove EVERYTHING that looks like ANSI
-    // Remove ALL digit patterns that could be ANSI codes
-    text = text.replace(/\d+;\d+m/g, '');           // "1;35m"
-    text = text.replace(/\d+m/g, '');               // "35m" 
-    text = text.replace(/;\d+m/g, '');              // ";35m"
-    text = text.replace(/\b\d+(?:;\d+)*m\b/g, ''); // Word boundary versions
+    // GENTLE cleanup - only remove obvious artifacts, preserve intentional formatting
     
-    // Remove bracketed versions  
-    text = text.replace(/\[\d+;\d+m/g, '');         // "[1;35m"
-    text = text.replace(/\[\d+m/g, '');             // "[35m"
-    text = text.replace(/\[;\d+m/g, '');            // "[;35m"
-    text = text.replace(/\[m/g, '');                // "[m"
-    text = text.replace(/\[0m/g, '');               // "[0m"
+    // Remove only standalone ANSI patterns that appear as literal text (not escape sequences)
+    text = text.replace(/\b1;35m\b/g, '');           // Specific problematic artifact
+    text = text.replace(/\b0;32m\b/g, '');           
+    text = text.replace(/\b1;36m\b/g, '');
+    text = text.replace(/\b1;34m\b/g, '');
     
-    // Remove ALL escape sequences
-    text = text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
-    text = text.replace(/\x1b\[[0-9;]*m/g, '');
-    text = text.replace(/\x1b\[/g, '');
-    text = text.replace(/\x1b/g, '');               // ANY escape character
+    // Remove broken escape sequences but preserve complete ones
+    text = text.replace(/\x1b\[(?![0-9;]*[a-zA-Z])/g, '');  // "\x1b[" not followed by valid sequence
+    text = text.replace(/\x1b(?!\[)/g, '');                  // "\x1b" not followed by "["
     
-    // Remove stray numbers followed by 'm' that might be ANSI remnants
-    text = text.replace(/(?:^|\s)(\d{1,2};\d{1,2}m)(?=\s|$)/g, ' ');
-    text = text.replace(/(?:^|\s)(\d{1,2}m)(?=\s|$)/g, ' ');
+    // Remove clearly broken bracket sequences
+    text = text.replace(/\[(?![0-9;]*m)[\d;]*(?![a-zA-Z])/g, ''); // "[" followed by digits but not ending properly
     
-    // Remove any remaining bracket sequences
-    text = text.replace(/\[[\d;]*[mK]?/g, '');
-    
-    // Remove control characters
-    text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
-    
-    // Clean up spaces
+    // Very gentle space cleanup
     text = text.replace(/  +/g, ' ');
-    text = text.replace(/^[ \t]+|[ \t]+$/gm, '');
+    text = text.trim();
     
     console.log('After cleanup:', text.substring(0, 100));
     return text;
   }
   
   /**
-   * Fallback method to open links when electronAPI fails
+   * TARGETED ANSI CLEANUP - Remove artifacts while preserving intentional formatting
    */
-  tryFallbackLinkOpen(url) {
-    console.log('Trying fallback link opening for:', url);
+  nuclearPreprocessor(text) {
+    console.log('🎯 TARGETED CLEANUP - Before:', text.substring(0, 100));
     
+    // Only remove ANSI artifacts that appear as plain text (not part of actual escape sequences)
+    // These are the problematic ones that show up as visible "1;35m" in the output
+    
+    // Remove standalone ANSI-looking patterns that are NOT preceded by escape characters
+    // This catches the "1;35m" artifacts while preserving real "\x1b[1;35m" sequences
+    text = text.replace(/(?<!\x1b\[)\b\d{1,2};\d{1,2}m\b/g, '');      // "1;35m" but not "\x1b[1;35m"
+    text = text.replace(/(?<!\x1b\[)\b\d{1,2};\d{1,2};\d{1,2}m\b/g, ''); // "1;35;40m" but not "\x1b[1;35;40m"
+    text = text.replace(/(?<!\x1b\[)\b\d{1,2}m\b/g, '');              // "35m" but not "\x1b[35m"
+    
+    // Remove specific problematic sequences that commonly show up as artifacts
+    text = text.replace(/\b1;35m\b/g, '');                   // The main culprit
+    text = text.replace(/\b0;32m\b/g, '');                   
+    text = text.replace(/\b1;36m\b/g, '');
+    text = text.replace(/\b1;34m\b/g, '');
+    text = text.replace(/\b1;37m\b/g, '');
+    text = text.replace(/\b0;31m\b/g, '');
+    
+    // Remove orphaned escape sequences and incomplete patterns
+    text = text.replace(/\x1b\[(?![0-9])/g, '');             // "\x1b[" not followed by digits
+    text = text.replace(/\x1b(?!\[)/g, '');                  // "\x1b" not followed by "["
+    
+    // Remove only clearly broken sequences, not valid ones
+    text = text.replace(/\[[0-9;]*m(?!\x1b)/g, (match) => {
+      // Only remove if it looks like a broken fragment
+      if (match.length < 4 && !match.startsWith('[0m') && !match.startsWith('[m')) {
+        return '';
+      }
+      return match;
+    });
+    
+    // Clean up multiple spaces but be gentle
+    text = text.replace(/  +/g, ' ');
+    
+    console.log('🎯 TARGETED CLEANUP - After:', text.substring(0, 100));
+    return text;
+  }
+
+  /**
+   * Add simple click handler as fallback when WebLinksAddon fails
+   */
+  addSimpleClickHandler() {
+    console.log('Adding simple fallback click handler');
+    
+    this.terminal.element.addEventListener('click', (event) => {
+      // Look for URLs in the clicked area
+      const rect = this.terminal.element.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      
+      // Get the buffer and try to find URLs in visible area
+      const buffer = this.terminal.buffer.active;
+      const viewportY = buffer.viewportY;
+      
+      // Check a few lines around the click
+      for (let i = 0; i < this.terminal.rows; i++) {
+        const line = buffer.getLine(viewportY + i);
+        if (line) {
+          const lineText = line.translateToString();
+          const urlMatch = lineText.match(/(https?:\/\/[^\s\)>\]]+)/);
+          if (urlMatch) {
+            console.log('🔗 Fallback handler found URL:', urlMatch[1]);
+            this.openExternalUrl(urlMatch[1]);
+            event.preventDefault();
+            return;
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Open external URL using Electron API
+   * @param {string} url - URL to open
+   */
+  openExternalUrl(url) {
+    console.log('🔗 Opening external URL:', url);
+    
+    // Try electronAPI first
+    if (window.electronAPI && window.electronAPI.shell && window.electronAPI.shell.openExternal) {
+      window.electronAPI.shell.openExternal(url).then(() => {
+        console.log('✅ URL opened successfully via electronAPI');
+        this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
+      }).catch(error => {
+        console.error('❌ electronAPI failed:', error);
+        this.fallbackUrlOpen(url);
+      });
+    } else {
+      console.warn('electronAPI not available, using fallback');
+      this.fallbackUrlOpen(url);
+    }
+  }
+
+  /**
+   * Fallback method to open URLs
+   * @param {string} url - URL to open
+   */
+  fallbackUrlOpen(url) {
     try {
-      // Method 1: Try window.open
+      // Try window.open
       const newWindow = window.open(url, '_blank');
       if (newWindow) {
-        console.log('Opened link via window.open');
         this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
-        setTimeout(() => {
-          window.terminal.write(this.id, '\r');
-        }, 100);
+        console.log('✅ URL opened via window.open');
       } else {
-        // Method 2: Try creating a temporary link element
+        // Create temporary link element as last resort
         const link = document.createElement('a');
         link.href = url;
         link.target = '_blank';
@@ -1053,17 +1083,15 @@ class TerminalSession {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        console.log('Opened link via temporary link element');
-        this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
-        setTimeout(() => {
-          window.terminal.write(this.id, '\r');
-        }, 100);
+        this.terminal.write(`\r\n\x1b[33m🔗 Link clicked: ${url}\x1b[0m\r\n`);
+        console.log('✅ URL opened via temporary link element');
       }
     } catch (error) {
-      console.error('All fallback methods failed:', error);
-      this.terminal.write(`\r\n\x1b[31m❌ Failed to open link: ${url}\x1b[0m\r\n`);
+      console.error('❌ All URL opening methods failed:', error);
+      this.terminal.write(`\r\n\x1b[31m❌ Failed to open: ${url}\x1b[0m\r\n`);
     }
   }
+
 
   /**
    * Handle /toggle command
