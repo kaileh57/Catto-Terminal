@@ -22,9 +22,29 @@ async function loadStoredSystemPrompt() {
   }
 }
 
+// Load model settings on startup
+async function loadStoredModelSettings() {
+  try {
+    const storedModel = await SimpleKeyStorage.getAPIKey('current-model');
+    if (storedModel) {
+      currentModel = storedModel;
+      console.log('Loaded stored model:', currentModel);
+    }
+    
+    const storedProviderPrefs = await SimpleKeyStorage.getAPIKey('provider-preferences');
+    if (storedProviderPrefs) {
+      currentProviderPreferences = JSON.parse(storedProviderPrefs);
+      console.log('Loaded stored provider preferences:', currentProviderPreferences);
+    }
+  } catch (error) {
+    console.error('Failed to load stored model settings:', error);
+  }
+}
+
 export function setupIpcHandlers() {
-  // Load stored system prompt
+  // Load stored settings
   loadStoredSystemPrompt();
+  loadStoredModelSettings();
   
   // Handle process output
   processManager.on('data', (id: string, data: string) => {
@@ -242,6 +262,16 @@ export function setupIpcHandlers() {
       }
       
       console.log(`Provider preferences set:`, currentProviderPreferences);
+      
+      // Persist the model and provider preferences
+      try {
+        await SimpleKeyStorage.storeAPIKey('current-model', currentModel);
+        await SimpleKeyStorage.storeAPIKey('provider-preferences', JSON.stringify(currentProviderPreferences));
+        console.log('Model settings saved to storage');
+      } catch (error) {
+        console.error('Failed to save model settings:', error);
+      }
+      
       return { success: true };
     } catch (error) {
       console.error('Set model error:', error);

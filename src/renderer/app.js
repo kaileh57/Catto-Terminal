@@ -84,6 +84,9 @@ class TerminalSession {
     this.fitAddon = new FitAddon.FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     
+    // Initialize clickable links system
+    this.clickableLinks = new Map();
+    
     // Open terminal in container
     this.terminal.open(container);
     
@@ -109,66 +112,80 @@ class TerminalSession {
       }
     });
     
-    // Add click handler for markdown links - simplified approach
+    // Add click handler for links
     this.terminal.element.addEventListener('click', (event) => {
       console.log('Click detected on terminal');
       
-      // Get all visible lines and search for link markers
-      const buffer = this.terminal.buffer.active;
-      const viewportY = this.terminal.buffer.active.viewportY;
-      const rows = this.terminal.rows;
+      // Get clicked position
+      const rect = this.terminal.element.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
       
-      // Check all visible lines for links
-      for (let i = 0; i < rows; i++) {
-        const lineIndex = viewportY + i;
-        if (lineIndex >= 0 && lineIndex < buffer.length) {
-          const line = buffer.getLine(lineIndex);
-          if (line) {
-            const lineText = line.translateToString();
+      // Convert to terminal coordinates
+      const cols = this.terminal.cols;
+      const rows = this.terminal.rows;
+      const cellWidth = rect.width / cols;
+      const cellHeight = rect.height / rows;
+      
+      const col = Math.floor(x / cellWidth);
+      const row = Math.floor(y / cellHeight);
+      
+      // Get the line text
+      const buffer = this.terminal.buffer.active;
+      if (row >= 0 && row < buffer.length) {
+        const line = buffer.getLine(row);
+        if (line) {
+          const lineText = line.translateToString();
+          console.log('Clicked line text:', lineText);
+          
+          // Look for URLs in the line and check if click was on the URL part
+          const urlMatch = lineText.match(/(https?:\/\/[^\s\)>\]]+)/);
+          if (urlMatch) {
+            const url = urlMatch[1];
+            const urlStart = lineText.indexOf(url);
+            const urlEnd = urlStart + url.length;
             
-            // If this line contains a link marker, check if it was clicked
-            const linkMatch = lineText.match(/◉([^◉]+)◉/);
-            if (linkMatch) {
-              const url = linkMatch[1];
+            console.log(`Click at col ${col}, URL "${url}" at ${urlStart}-${urlEnd}`);
+            
+            // Only open if clicked specifically on the URL part (give some margin)
+            if (col >= urlStart - 3 && col <= urlEnd + 3) {
+              console.log('Clicked directly on URL:', url);
               
-              // Simple approach: if there's a link in any visible line and user clicked,
-              // check if click was roughly in the terminal area and open the link
-              const rect = this.terminal.element.getBoundingClientRect();
-              const clickX = event.clientX - rect.left;
-              const clickY = event.clientY - rect.top;
+              // Try multiple ways to open the URL
+              let opened = false;
               
-              // If click is within terminal bounds, open the link
-              if (clickX >= 0 && clickX <= rect.width && clickY >= 0 && clickY <= rect.height) {
-                console.log('Found clickable link:', url);
-                console.log('Click position:', clickX, clickY);
-                
-                // Open the URL using electronAPI
-                if (window.electronAPI && window.electronAPI.shell) {
+              // Method 1: Try electronAPI.shell
+              if (window.electronAPI && window.electronAPI.shell) {
+                try {
                   window.electronAPI.shell.openExternal(url).then(() => {
-                    console.log('Successfully opened link:', url);
-                    // Show feedback in terminal
+                    console.log('Successfully opened link via electronAPI:', url);
                     this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
-                    // Request fresh prompt
                     setTimeout(() => {
                       window.terminal.write(this.id, '\r');
                     }, 100);
+                    opened = true;
                   }).catch(error => {
-                    console.error('Failed to open link:', error);
-                    this.terminal.write(`\r\n\x1b[31m❌ Failed to open link\x1b[0m\r\n`);
+                    console.error('electronAPI.shell failed:', error);
+                    // Try fallback method
+                    this.tryFallbackLinkOpen(url);
                   });
-                } else {
-                  console.error('electronAPI.shell not available');
+                } catch (error) {
+                  console.error('electronAPI.shell error:', error);
+                  this.tryFallbackLinkOpen(url);
                 }
-                
-                event.preventDefault();
-                return;
+              } else {
+                console.warn('electronAPI.shell not available, trying fallback');
+                this.tryFallbackLinkOpen(url);
               }
+              
+              event.preventDefault();
+              return;
+            } else {
+              console.log('Click was not on URL part, ignoring');
             }
           }
         }
       }
-      
-      console.log('No clickable links found');
     });
     
     // Add right-click context menu for copying selected text only
@@ -204,7 +221,10 @@ class TerminalSession {
         menu.textContent = `Copy "${preview}"`;
         
         menu.addEventListener('click', () => {
-          navigator.clipboard.writeText(selectedText).then(() => {
+          // Just copy exactly what was selected, nothing more
+          const textToCopy = selectedText;
+          
+          navigator.clipboard.writeText(textToCopy).then(() => {
             console.log('Right-click copy successful: Selected text');
           }).catch(error => {
             console.error('Right-click copy failed:', error);
@@ -383,8 +403,11 @@ class TerminalSession {
           
           // Only copy if there's actually selected text
           if (selectedText && selectedText.trim().length > 0) {
-            console.log(`Copying selected text: "${selectedText}"`);
-            navigator.clipboard.writeText(selectedText.trim()).then(() => {
+            // Just copy exactly what was selected, nothing more
+            const textToCopy = selectedText.trim();
+            
+            console.log(`Copying text: "${textToCopy.substring(0, 100)}..."`);            
+            navigator.clipboard.writeText(textToCopy).then(() => {
               console.log('Text copied to clipboard successfully');
               // Flash the terminal briefly to show copy action
               this.flashTerminal();
@@ -876,9 +899,21 @@ class TerminalSession {
     // Store original markdown for copy functionality
     this.lastMarkdownResponse = response;
     
+    // Track the position where AI response starts for copy detection
+    this.aiResponseStartRow = this.terminal.buffer.active.cursorY + this.terminal.buffer.active.baseY;
+    
+    // NUCLEAR cleanup - remove ALL ANSI artifacts BEFORE processing
+    const cleanedResponse = this.cleanupText(response);
+    console.log('After nuclear cleanup:', cleanedResponse.substring(0, 100));
+    
     // Convert markdown to styled plain text that works in terminal
-    const styledText = this.convertMarkdownToTerminalText(response);
+    const styledText = this.convertMarkdownToTerminalText(cleanedResponse);
     this.terminal.write(styledText);
+    
+    // Track the position where AI response ends
+    this.aiResponseEndRow = this.terminal.buffer.active.cursorY + this.terminal.buffer.active.baseY;
+    
+    console.log(`AI response rendered from row ${this.aiResponseStartRow} to ${this.aiResponseEndRow}`);
   }
   
   /**
@@ -935,39 +970,99 @@ class TerminalSession {
     // Convert inline code to yellow background
     text = text.replace(/`([^`]+)`/g, '\x1b[43;30m $1 \x1b[0m');
     
-    // Convert links to clickable format and store them
+    // Convert links back to simple colored format that works with our click handler
     text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
-      // Store URL for click handling with a hidden marker
-      if (!this.clickableLinks) this.clickableLinks = new Map();
-      const linkId = `◉${url}◉`; // Use special characters that are unlikely to appear in normal text
-      this.clickableLinks.set(url, linkText);
-      // Return just the colored link text with a hidden marker at the end
-      return `\x1b[4;36m${linkText}\x1b[0m\x1b[8m${linkId}\x1b[0m`; // \x1b[8m makes text invisible
+      // Simple format: colored link text followed by the actual URL for clicking
+      return `\x1b[36m${linkText}\x1b[0m \x1b[90m->\x1b[0m \x1b[4;94m${url}\x1b[0m`;
     });
+    
+    // No final cleanup needed - the initial cleanupText call handles all stray codes
+    // while preserving the ANSI codes we intentionally added for formatting
     
     return text;
   }
   
   /**
    * Clean up text by removing stray ANSI codes and other artifacts
+   * This function is designed to clean markdown text BEFORE processing
    * @param {string} text 
    * @returns {string}
    */
   cleanupText(text) {
-    // Remove any stray ANSI codes that might appear (like 1;35m before headings)
-    text = text.replace(/\d+;\d+m/g, '');
-    text = text.replace(/\x1b\[\d+;\d+m/g, ''); // Also remove properly formatted ones that are orphaned
-    text = text.replace(/\x1b\[\d+m/g, ''); // Single parameter ANSI codes
-    text = text.replace(/\x1b\[m/g, ''); // Reset codes
-    text = text.replace(/\x1b\[0m/g, ''); // Explicit reset codes
+    console.log('Before cleanup:', text.substring(0, 100));
     
-    // Remove any other control characters except newlines and carriage returns
+    // SUPER AGGRESSIVE cleanup - remove EVERYTHING that looks like ANSI
+    // Remove ALL digit patterns that could be ANSI codes
+    text = text.replace(/\d+;\d+m/g, '');           // "1;35m"
+    text = text.replace(/\d+m/g, '');               // "35m" 
+    text = text.replace(/;\d+m/g, '');              // ";35m"
+    text = text.replace(/\b\d+(?:;\d+)*m\b/g, ''); // Word boundary versions
+    
+    // Remove bracketed versions  
+    text = text.replace(/\[\d+;\d+m/g, '');         // "[1;35m"
+    text = text.replace(/\[\d+m/g, '');             // "[35m"
+    text = text.replace(/\[;\d+m/g, '');            // "[;35m"
+    text = text.replace(/\[m/g, '');                // "[m"
+    text = text.replace(/\[0m/g, '');               // "[0m"
+    
+    // Remove ALL escape sequences
+    text = text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+    text = text.replace(/\x1b\[[0-9;]*m/g, '');
+    text = text.replace(/\x1b\[/g, '');
+    text = text.replace(/\x1b/g, '');               // ANY escape character
+    
+    // Remove stray numbers followed by 'm' that might be ANSI remnants
+    text = text.replace(/(?:^|\s)(\d{1,2};\d{1,2}m)(?=\s|$)/g, ' ');
+    text = text.replace(/(?:^|\s)(\d{1,2}m)(?=\s|$)/g, ' ');
+    
+    // Remove any remaining bracket sequences
+    text = text.replace(/\[[\d;]*[mK]?/g, '');
+    
+    // Remove control characters
     text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
     
-    // Clean up multiple consecutive spaces
+    // Clean up spaces
     text = text.replace(/  +/g, ' ');
+    text = text.replace(/^[ \t]+|[ \t]+$/gm, '');
     
+    console.log('After cleanup:', text.substring(0, 100));
     return text;
+  }
+  
+  /**
+   * Fallback method to open links when electronAPI fails
+   */
+  tryFallbackLinkOpen(url) {
+    console.log('Trying fallback link opening for:', url);
+    
+    try {
+      // Method 1: Try window.open
+      const newWindow = window.open(url, '_blank');
+      if (newWindow) {
+        console.log('Opened link via window.open');
+        this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
+        setTimeout(() => {
+          window.terminal.write(this.id, '\r');
+        }, 100);
+      } else {
+        // Method 2: Try creating a temporary link element
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        console.log('Opened link via temporary link element');
+        this.terminal.write(`\r\n\x1b[32m🔗 Opened: ${url}\x1b[0m\r\n`);
+        setTimeout(() => {
+          window.terminal.write(this.id, '\r');
+        }, 100);
+      }
+    } catch (error) {
+      console.error('All fallback methods failed:', error);
+      this.terminal.write(`\r\n\x1b[31m❌ Failed to open link: ${url}\x1b[0m\r\n`);
+    }
   }
 
   /**
@@ -1814,6 +1909,8 @@ class CatTerminalApp {
     
     // Markdown storage for copy functionality
     this.lastMarkdownResponse = '';  // Store original markdown for copying
+    this.aiResponseStartRow = -1;    // Track start row of AI response
+    this.aiResponseEndRow = -1;      // Track end row of AI response
     
     // Terminal context for AI integration
     this.terminalContext = {

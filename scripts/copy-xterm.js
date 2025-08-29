@@ -21,6 +21,11 @@ try {
   );
   
   fs.copyFileSync(
+    path.join(__dirname, '../node_modules/@xterm/addon-web-links/lib/addon-web-links.js'),
+    path.join(distDir, 'addon-web-links.js')
+  );
+  
+  fs.copyFileSync(
     path.join(__dirname, '../node_modules/@xterm/xterm/css/xterm.css'),
     path.join(__dirname, '../dist/renderer/xterm.css')
   );
