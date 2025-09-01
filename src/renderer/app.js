@@ -764,14 +764,16 @@ class TerminalSession {
     try {
       let catResponse = '';
       
-      // Generate terminal context to enhance the AI's understanding
-      const terminalContext = this.generateAIContext();
-      
-      // Enhance the prompt with terminal context
+      // Generate terminal context to enhance the AI's understanding (if privacy allows)
       let enhancedPrompt = prompt;
-      if (terminalContext) {
-        enhancedPrompt = `${terminalContext}\n\nUser Question: ${prompt}\n\nPlease provide a helpful response considering the terminal context above.`;
-        console.log('Enhanced prompt with context:', enhancedPrompt.substring(0, 200) + '...');
+      if (this.contextSharingEnabled) {
+        const terminalContext = this.generateAIContext();
+        if (terminalContext && terminalContext.trim()) {
+          enhancedPrompt = `${terminalContext}\n\nUser Question: ${prompt}\n\nPlease provide a helpful response considering the terminal context above.`;
+          console.log('Enhanced prompt with context:', enhancedPrompt.substring(0, 200) + '...');
+        }
+      } else {
+        console.log('Context sharing disabled, using prompt without terminal context');
       }
       
       // Set up streaming token handler
@@ -844,18 +846,15 @@ class TerminalSession {
       return;
     }
     
-    console.log('Rendering markdown response:', response.substring(0, 100) + '...');
-    
     // Store original markdown for copy functionality
     this.lastMarkdownResponse = response;
     
     // Track the position where AI response starts for copy detection
     this.aiResponseStartRow = this.terminal.buffer.active.cursorY + this.terminal.buffer.active.baseY;
     
-    // NUCLEAR cleanup - remove ALL ANSI artifacts BEFORE processing
+    // Clean up any ANSI artifacts BEFORE processing
     const nuked = this.nuclearPreprocessor(response);
     const cleanedResponse = this.cleanupText(nuked);
-    console.log('After NUCLEAR cleanup:', cleanedResponse.substring(0, 100));
     
     // Convert markdown to styled plain text that works in terminal
     const styledText = this.convertMarkdownToTerminalText(cleanedResponse);
@@ -875,8 +874,7 @@ class TerminalSession {
   convertMarkdownToTerminalText(markdown) {
     let text = markdown;
     
-    // Preprocessor: Clean up any stray ANSI codes or artifacts
-    text = this.cleanupText(text);
+    // Input should already be clean from renderMarkdownResponse, no need for additional cleanup
     
     // First handle code blocks (so they don't interfere with other formatting)
     text = text.replace(/```(\w+)?\n?([\s\S]*?)```/g, (match, lang, code) => {
@@ -894,7 +892,10 @@ class TerminalSession {
       } else if (line.startsWith('## ')) {
         return line.replace(/^## (.+)$/, '\x1b[1;36m══ $1 ══\x1b[0m');
       } else if (line.startsWith('# ')) {
-        return line.replace(/^# (.+)$/, '\x1b[1;35m▓▓ $1 ▓▓\x1b[0m');
+        const heading = line.substring(2); // Remove "# "
+        // Use char codes instead of escape sequences to avoid corruption
+        const esc = String.fromCharCode(27);
+        return `${esc}[1;35m▓▓ ${heading} ▓▓${esc}[0m`;
       } else if (line.startsWith('> ')) {
         return line.replace(/^> (.+)$/, '\x1b[90m│ $1\x1b[0m');
       } else if (line.match(/^-+$/)) {
@@ -940,8 +941,6 @@ class TerminalSession {
    * @returns {string}
    */
   cleanupText(text) {
-    console.log('Before cleanup:', text.substring(0, 100));
-    
     // GENTLE cleanup - only remove obvious artifacts, preserve intentional formatting
     
     // Remove only standalone ANSI patterns that appear as literal text (not escape sequences)
@@ -961,7 +960,6 @@ class TerminalSession {
     text = text.replace(/  +/g, ' ');
     text = text.trim();
     
-    console.log('After cleanup:', text.substring(0, 100));
     return text;
   }
   
@@ -969,42 +967,18 @@ class TerminalSession {
    * TARGETED ANSI CLEANUP - Remove artifacts while preserving intentional formatting
    */
   nuclearPreprocessor(text) {
-    console.log('🎯 TARGETED CLEANUP - Before:', text.substring(0, 100));
-    
-    // Only remove ANSI artifacts that appear as plain text (not part of actual escape sequences)
-    // These are the problematic ones that show up as visible "1;35m" in the output
-    
-    // Remove standalone ANSI-looking patterns that are NOT preceded by escape characters
-    // This catches the "1;35m" artifacts while preserving real "\x1b[1;35m" sequences
-    text = text.replace(/(?<!\x1b\[)\b\d{1,2};\d{1,2}m\b/g, '');      // "1;35m" but not "\x1b[1;35m"
-    text = text.replace(/(?<!\x1b\[)\b\d{1,2};\d{1,2};\d{1,2}m\b/g, ''); // "1;35;40m" but not "\x1b[1;35;40m"
-    text = text.replace(/(?<!\x1b\[)\b\d{1,2}m\b/g, '');              // "35m" but not "\x1b[35m"
-    
-    // Remove specific problematic sequences that commonly show up as artifacts
-    text = text.replace(/\b1;35m\b/g, '');                   // The main culprit
-    text = text.replace(/\b0;32m\b/g, '');                   
+    // Just remove obvious artifacts without touching escape sequences
+    // Remove standalone patterns that appear as literal text (not escape sequences)
+    text = text.replace(/\b1;35m\b/g, '');
+    text = text.replace(/\b0;32m\b/g, '');
     text = text.replace(/\b1;36m\b/g, '');
     text = text.replace(/\b1;34m\b/g, '');
     text = text.replace(/\b1;37m\b/g, '');
     text = text.replace(/\b0;31m\b/g, '');
     
-    // Remove orphaned escape sequences and incomplete patterns
-    text = text.replace(/\x1b\[(?![0-9])/g, '');             // "\x1b[" not followed by digits
-    text = text.replace(/\x1b(?!\[)/g, '');                  // "\x1b" not followed by "["
-    
-    // Remove only clearly broken sequences, not valid ones
-    text = text.replace(/\[[0-9;]*m(?!\x1b)/g, (match) => {
-      // Only remove if it looks like a broken fragment
-      if (match.length < 4 && !match.startsWith('[0m') && !match.startsWith('[m')) {
-        return '';
-      }
-      return match;
-    });
-    
-    // Clean up multiple spaces but be gentle
+    // Clean up spaces
     text = text.replace(/  +/g, ' ');
     
-    console.log('🎯 TARGETED CLEANUP - After:', text.substring(0, 100));
     return text;
   }
 
@@ -1116,6 +1090,19 @@ class TerminalSession {
         }
       } else {
         this.terminal.write(`\r\n\x1b[33mCat overlay not available\x1b[0m\r\n`);
+      }
+    } else if (target === 'context') {
+      switch (value) {
+        case 'on':
+          this.contextSharingEnabled = true;
+          this.terminal.write(`\r\n\x1b[32mTerminal context sharing enabled - AI will receive command history and directory info\x1b[0m\r\n`);
+          break;
+        case 'off':
+          this.contextSharingEnabled = false;
+          this.terminal.write(`\r\n\x1b[33mTerminal context sharing disabled - AI responses will be generic\x1b[0m\r\n`);
+          break;
+        default:
+          this.terminal.write(`\r\n\x1b[31mUsage: /toggle context on|off\x1b[0m\r\n`);
       }
     } else if (target === 'markdown') {
       switch (value) {
@@ -1816,7 +1803,7 @@ class TerminalSession {
   }
   
   /**
-   * Generate context string for AI requests
+   * Generate enhanced context string for AI requests with file/project awareness
    */
   generateAIContext() {
     // Safety check - initialize if needed
@@ -1830,27 +1817,179 @@ class TerminalSession {
       };
     }
     
-    if (this.terminalContext.recentCommands.length === 0) {
-      return '';
+    let context = `=== Terminal Session Context ===\n`;
+    
+    // Current environment info with enhanced directory context
+    context += `Working Directory: ${this.terminalContext.currentDirectory}\n`;
+    context += `Operating System: Windows\n`;
+    context += `Shell: PowerShell\n`;
+    
+    // Add project type detection
+    const projectInfo = this.detectProjectType();
+    if (projectInfo) {
+      context += `Project Type: ${projectInfo}\n`;
     }
     
-    let context = `Terminal Context:\nCurrent Directory: ${this.terminalContext.currentDirectory}\n\nRecent Commands:\n`;
-    
-    // Add recent commands in reverse order (most recent first)
-    const recentCommands = this.terminalContext.recentCommands.slice(-5); // Last 5 commands
-    for (let i = recentCommands.length - 1; i >= 0; i--) {
-      const entry = recentCommands[i];
-      context += `$ ${entry.command}\n`;
-      if (entry.output) {
-        context += entry.output + '\n';
-      }
-      if (entry.isError) {
-        context += '[ERROR]\n';
-      }
-      context += '\n';
+    // Add recent directory listings if available
+    const fileListings = this.extractFileListings();
+    if (fileListings) {
+      context += `Current Directory Contents:\n${fileListings}\n`;
     }
+    
+    context += `\n`;
+    
+    // Recent error context (prioritized for troubleshooting)
+    if (this.terminalContext.lastError) {
+      context += `🚨 Most Recent Error:\n`;
+      context += `Command: ${this.terminalContext.lastError.command}\n`;
+      context += `Output: ${this.truncateOutput(this.terminalContext.lastError.output, 300)}\n\n`;
+    }
+    
+    // Recent command history (most relevant for context)
+    if (this.terminalContext.recentCommands.length > 0) {
+      context += `📋 Recent Command History:\n`;
+      const recentCommands = this.terminalContext.recentCommands.slice(-3); // Last 3 commands for efficiency
+      
+      for (let i = recentCommands.length - 1; i >= 0; i--) {
+        const entry = recentCommands[i];
+        const timeAgo = this.getTimeAgo(entry.timestamp);
+        
+        context += `\n[${timeAgo}] $ ${entry.command}\n`;
+        
+        if (entry.isError) {
+          context += `❌ ERROR: ${this.truncateOutput(entry.output, 200)}\n`;
+        } else if (entry.output && entry.output.trim()) {
+          context += `${this.truncateOutput(entry.output, 200)}\n`;
+        } else {
+          context += `(no output)\n`;
+        }
+      }
+    }
+    
+    context += `\n=== End Context ===\n`;
+    
+    // Log context size for optimization
+    console.log(`Generated AI context: ${context.length} characters`);
     
     return context;
+  }
+  
+  /**
+   * Detect project type from recent command outputs
+   */
+  detectProjectType() {
+    if (!this.terminalContext.recentCommands.length) return null;
+    
+    // Look through recent command outputs for project indicators
+    for (const entry of this.terminalContext.recentCommands) {
+      const output = entry.output.toLowerCase();
+      const command = entry.command.toLowerCase();
+      
+      // Package.json = Node.js project
+      if (output.includes('package.json') || command.includes('npm ') || command.includes('yarn ')) {
+        return 'Node.js/JavaScript Project';
+      }
+      
+      // Requirements.txt or .py files = Python project
+      if (output.includes('requirements.txt') || output.includes('.py') || command.includes('pip ') || command.includes('python ')) {
+        return 'Python Project';
+      }
+      
+      // .csproj or .sln = C# project
+      if (output.includes('.csproj') || output.includes('.sln') || command.includes('dotnet ')) {
+        return 'C#/.NET Project';
+      }
+      
+      // pom.xml or build.gradle = Java project
+      if (output.includes('pom.xml') || output.includes('build.gradle') || command.includes('mvn ') || command.includes('gradle ')) {
+        return 'Java Project';
+      }
+      
+      // Cargo.toml = Rust project
+      if (output.includes('cargo.toml') || command.includes('cargo ')) {
+        return 'Rust Project';
+      }
+      
+      // go.mod = Go project
+      if (output.includes('go.mod') || command.includes('go ')) {
+        return 'Go Project';
+      }
+      
+      // .git directory = Git repository
+      if (output.includes('.git') || command.includes('git ')) {
+        return 'Git Repository';
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Extract file listings from recent ls/dir command outputs
+   */
+  extractFileListings() {
+    if (!this.terminalContext.recentCommands.length) return null;
+    
+    // Look for recent ls, dir, or Get-ChildItem commands
+    for (let i = this.terminalContext.recentCommands.length - 1; i >= 0; i--) {
+      const entry = this.terminalContext.recentCommands[i];
+      const command = entry.command.toLowerCase().trim();
+      
+      if (command === 'ls' || command === 'dir' || command.startsWith('get-childitem') || command === 'gci') {
+        if (entry.output && entry.output.trim()) {
+          // Extract and clean up the file listing
+          const lines = entry.output.split('\n').slice(0, 10); // Max 10 lines
+          const cleanLines = lines
+            .map(line => line.trim())
+            .filter(line => line && !line.includes('Directory:') && !line.includes('Mode'))
+            .slice(0, 8); // Max 8 files/folders
+          
+          if (cleanLines.length > 0) {
+            return cleanLines.join('\n');
+          }
+        }
+        break; // Only check the most recent listing command
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Truncate output for context efficiency
+   */
+  truncateOutput(output, maxLength) {
+    if (!output || output.length <= maxLength) {
+      return output;
+    }
+    
+    const truncated = output.substring(0, maxLength);
+    const lastNewline = truncated.lastIndexOf('\n');
+    
+    // Try to cut at a natural break
+    if (lastNewline > maxLength * 0.7) {
+      return truncated.substring(0, lastNewline) + '\n... [truncated]';
+    }
+    
+    return truncated + '... [truncated]';
+  }
+  
+  /**
+   * Get human-readable time difference
+   */
+  getTimeAgo(timestamp) {
+    const now = new Date();
+    const diffMs = now - timestamp;
+    const diffSecs = Math.floor(diffMs / 1000);
+    const diffMins = Math.floor(diffSecs / 60);
+    
+    if (diffSecs < 60) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    
+    return timestamp.toLocaleDateString();
   }
 
   /**
@@ -1939,6 +2078,9 @@ class CatTerminalApp {
     this.lastMarkdownResponse = '';  // Store original markdown for copying
     this.aiResponseStartRow = -1;    // Track start row of AI response
     this.aiResponseEndRow = -1;      // Track end row of AI response
+    
+    // Context sharing for AI (privacy control)
+    this.contextSharingEnabled = true; // Default to enabled for better AI responses
     
     // Terminal context for AI integration
     this.terminalContext = {
