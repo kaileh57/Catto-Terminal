@@ -3,6 +3,11 @@
 
 class CommandAutocomplete {
   constructor(terminalElement) {
+    // Terminal reference for context
+    this.terminalElement = terminalElement;
+    this.terminalSession = null; // Will be set by app
+    
+    // Slash commands
     this.commands = [
       { 
         name: 'cat', 
@@ -48,11 +53,66 @@ class CommandAutocomplete {
       }
     ];
     
+    // Windows/PowerShell commands - common utilities and cmdlets
+    this.windowsCommands = [
+      // File and directory operations
+      { name: 'ls', description: 'List directory contents (alias for Get-ChildItem)', usage: 'ls [path]' },
+      { name: 'dir', description: 'List directory contents', usage: 'dir [path]' },
+      { name: 'cd', description: 'Change directory', usage: 'cd <path>' },
+      { name: 'pwd', description: 'Print working directory', usage: 'pwd' },
+      { name: 'mkdir', description: 'Create directory', usage: 'mkdir <name>' },
+      { name: 'rmdir', description: 'Remove directory', usage: 'rmdir <name>' },
+      { name: 'copy', description: 'Copy files', usage: 'copy <source> <destination>' },
+      { name: 'move', description: 'Move files', usage: 'move <source> <destination>' },
+      { name: 'del', description: 'Delete files', usage: 'del <file>' },
+      { name: 'type', description: 'Display file contents', usage: 'type <file>' },
+      
+      // PowerShell cmdlets
+      { name: 'Get-ChildItem', description: 'Get items in directory', usage: 'Get-ChildItem [path]' },
+      { name: 'Set-Location', description: 'Change current location', usage: 'Set-Location <path>' },
+      { name: 'Get-Location', description: 'Get current location', usage: 'Get-Location' },
+      { name: 'New-Item', description: 'Create new item', usage: 'New-Item -ItemType <type> -Name <name>' },
+      { name: 'Remove-Item', description: 'Remove item', usage: 'Remove-Item <path>' },
+      { name: 'Copy-Item', description: 'Copy item', usage: 'Copy-Item <source> <destination>' },
+      { name: 'Move-Item', description: 'Move item', usage: 'Move-Item <source> <destination>' },
+      { name: 'Get-Content', description: 'Get file contents', usage: 'Get-Content <file>' },
+      { name: 'Set-Content', description: 'Set file contents', usage: 'Set-Content <file> <content>' },
+      { name: 'Out-File', description: 'Send output to file', usage: 'command | Out-File <file>' },
+      
+      // System information
+      { name: 'Get-Process', description: 'Get running processes', usage: 'Get-Process [name]' },
+      { name: 'Get-Service', description: 'Get system services', usage: 'Get-Service [name]' },
+      { name: 'Get-ComputerInfo', description: 'Get computer information', usage: 'Get-ComputerInfo' },
+      { name: 'Get-Date', description: 'Get current date and time', usage: 'Get-Date' },
+      
+      // Network commands
+      { name: 'ping', description: 'Test network connectivity', usage: 'ping <hostname>' },
+      { name: 'ipconfig', description: 'Display IP configuration', usage: 'ipconfig [options]' },
+      { name: 'nslookup', description: 'Query DNS records', usage: 'nslookup <hostname>' },
+      { name: 'netstat', description: 'Display network connections', usage: 'netstat [options]' },
+      
+      // Common utilities
+      { name: 'cls', description: 'Clear screen', usage: 'cls' },
+      { name: 'clear', description: 'Clear screen (alias)', usage: 'clear' },
+      { name: 'echo', description: 'Display text', usage: 'echo <text>' },
+      { name: 'where', description: 'Locate command', usage: 'where <command>' },
+      { name: 'whoami', description: 'Display current user', usage: 'whoami' },
+      { name: 'hostname', description: 'Display computer name', usage: 'hostname' },
+      
+      // Git commands (common in development)
+      { name: 'git', description: 'Git version control', usage: 'git <subcommand>' },
+      { name: 'npm', description: 'Node package manager', usage: 'npm <command>' },
+      { name: 'node', description: 'Node.js runtime', usage: 'node <file>' },
+      { name: 'python', description: 'Python interpreter', usage: 'python <file>' },
+      { name: 'code', description: 'Visual Studio Code', usage: 'code [file]' }
+    ];
+    
     this.dropdown = null;
     this.isVisible = false;
     this.selectedIndex = 0;
     this.filteredCommands = [];
-    this.terminalElement = terminalElement;
+    this.currentMode = 'commands'; // 'commands', 'windows', 'history', 'paths'
+    this.commandHistory = []; // Will be populated from terminal session
     
     this.createDropdown();
     this.attachEventListeners();
@@ -101,25 +161,41 @@ class CommandAutocomplete {
   }
   
   show(inputText, cursorPosition) {
-    // Only show for commands that start with /
-    if (!inputText.startsWith('/')) {
+    const trimmedInput = inputText.trim();
+    
+    // Handle slash commands
+    if (trimmedInput.startsWith('/')) {
+      this.currentMode = 'commands';
+      const query = trimmedInput.slice(1).trim(); // Remove '/' prefix
+      const parts = query.split(' ');
+      const command = parts[0];
+      const args = parts.slice(1);
+      
+      // If we have a command and arguments, show parameter suggestions
+      if (parts.length > 1) {
+        this.showParameterSuggestions(command, args, cursorPosition);
+        return;
+      }
+      
+      // Otherwise show slash command suggestions
+      this.filteredCommands = this.filterCommands(query);
+    }
+    // Handle Windows commands and utilities
+    else if (trimmedInput.length > 0) {
+      this.currentMode = 'windows';
+      this.filteredCommands = this.filterWindowsCommands(trimmedInput);
+      
+      // Also include recent command history
+      const historyMatches = this.filterCommandHistory(trimmedInput);
+      this.filteredCommands = [...this.filteredCommands, ...historyMatches];
+      
+      // Remove duplicates and limit results
+      this.filteredCommands = this.removeDuplicates(this.filteredCommands).slice(0, 10);
+    }
+    else {
       this.hide();
       return;
     }
-    
-    const query = inputText.slice(1).trim(); // Remove '/' prefix
-    const parts = query.split(' ');
-    const command = parts[0];
-    const args = parts.slice(1);
-    
-    // If we have a command and arguments, show parameter suggestions
-    if (parts.length > 1) {
-      this.showParameterSuggestions(command, args, cursorPosition);
-      return;
-    }
-    
-    // Otherwise show command suggestions
-    this.filteredCommands = this.filterCommands(query);
     
     if (this.filteredCommands.length > 0) {
       this.selectedIndex = 0; // Reset selection to first item
@@ -145,9 +221,91 @@ class CommandAutocomplete {
     if (!query) return this.commands;
     
     return this.commands.filter(cmd =>
-      cmd.name.toLowerCase().includes(query.toLowerCase()) ||
+      this.fuzzyMatch(cmd.name, query) ||
       cmd.description.toLowerCase().includes(query.toLowerCase())
-    );
+    ).sort((a, b) => {
+      // Prioritize exact matches
+      const aExact = a.name.toLowerCase().startsWith(query.toLowerCase());
+      const bExact = b.name.toLowerCase().startsWith(query.toLowerCase());
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+  
+  filterWindowsCommands(query) {
+    if (!query) return [];
+    
+    return this.windowsCommands.filter(cmd =>
+      this.fuzzyMatch(cmd.name, query) ||
+      cmd.description.toLowerCase().includes(query.toLowerCase())
+    ).sort((a, b) => {
+      // Prioritize exact matches
+      const aExact = a.name.toLowerCase().startsWith(query.toLowerCase());
+      const bExact = b.name.toLowerCase().startsWith(query.toLowerCase());
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      return a.name.localeCompare(b.name);
+    }).slice(0, 8); // Limit Windows commands to avoid overwhelming
+  }
+  
+  filterCommandHistory(query) {
+    if (!query || !this.commandHistory.length) return [];
+    
+    const matches = [];
+    const uniqueCommands = new Set();
+    
+    // Search through history in reverse (most recent first)
+    for (let i = this.commandHistory.length - 1; i >= 0; i--) {
+      const historyItem = this.commandHistory[i];
+      if (historyItem && 
+          this.fuzzyMatch(historyItem, query) && 
+          !uniqueCommands.has(historyItem) &&
+          matches.length < 3) { // Limit history suggestions
+        
+        matches.push({
+          name: historyItem,
+          description: '📜 From command history',
+          usage: historyItem,
+          isHistory: true
+        });
+        uniqueCommands.add(historyItem);
+      }
+    }
+    
+    return matches;
+  }
+  
+  // Improved fuzzy matching algorithm
+  fuzzyMatch(text, query) {
+    if (!text || !query) return false;
+    
+    const textLower = text.toLowerCase();
+    const queryLower = query.toLowerCase();
+    
+    // Exact substring match gets highest priority
+    if (textLower.includes(queryLower)) return true;
+    
+    // Check if query characters appear in order (fuzzy match)
+    let textIndex = 0;
+    for (let queryIndex = 0; queryIndex < queryLower.length; queryIndex++) {
+      const queryChar = queryLower[queryIndex];
+      const foundIndex = textLower.indexOf(queryChar, textIndex);
+      if (foundIndex === -1) return false;
+      textIndex = foundIndex + 1;
+    }
+    
+    return true;
+  }
+  
+  removeDuplicates(commands) {
+    const seen = new Set();
+    return commands.filter(cmd => {
+      const key = cmd.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
   
   showParameterSuggestions(command, args, cursorPosition) {
@@ -266,14 +424,20 @@ class CommandAutocomplete {
   }
   
   renderDropdown() {
-    this.dropdown.innerHTML = this.filteredCommands.map((cmd, index) => `
-      <div class="autocomplete-item ${index === this.selectedIndex ? 'selected' : ''}" 
-           data-index="${index}">
-        <div class="command-name">/${cmd.name}</div>
-        <div class="command-description">${cmd.description}</div>
-        <div class="command-usage">${cmd.usage}</div>
-      </div>
-    `).join('');
+    this.dropdown.innerHTML = this.filteredCommands.map((cmd, index) => {
+      const prefix = this.currentMode === 'commands' ? '/' : '';
+      const nameClass = cmd.isHistory ? 'command-name history' : 'command-name';
+      const icon = cmd.isHistory ? '📜 ' : '';
+      
+      return `
+        <div class="autocomplete-item ${index === this.selectedIndex ? 'selected' : ''}" 
+             data-index="${index}">
+          <div class="${nameClass}">${icon}${prefix}${cmd.name}</div>
+          <div class="command-description">${cmd.description}</div>
+          <div class="command-usage">${cmd.usage}</div>
+        </div>
+      `;
+    }).join('');
   }
   
   positionDropdown(cursorPosition) {
@@ -330,9 +494,15 @@ class CommandAutocomplete {
   completeCommand() {
     if (this.selectedIndex >= 0 && this.selectedIndex < this.filteredCommands.length) {
       const command = this.filteredCommands[this.selectedIndex];
-      // For parameter suggestions, complete with the full command
-      // For regular commands, complete with just the command name
-      const completionText = command.name.startsWith('/') ? command.name.slice(1) : command.name;
+      let completionText;
+      
+      if (this.currentMode === 'commands') {
+        // For slash commands, complete with just the command name (no /)
+        completionText = command.name.startsWith('/') ? command.name.slice(1) : command.name;
+      } else {
+        // For Windows commands and history, complete with the full name
+        completionText = command.name;
+      }
       
       if (this.onComplete) {
         this.onComplete(completionText);
@@ -341,6 +511,72 @@ class CommandAutocomplete {
       return true;
     }
     return false;
+  }
+  
+  // Method to update command history from terminal session
+  updateCommandHistory(shellHistory, commandHistory) {
+    // Combine both shell and slash command histories
+    this.commandHistory = [...(shellHistory || []), ...(commandHistory || [])];
+    
+    // Keep only the most recent 50 commands to avoid memory issues
+    if (this.commandHistory.length > 50) {
+      this.commandHistory = this.commandHistory.slice(-50);
+    }
+  }
+  
+  // Method to set terminal session reference
+  setTerminalSession(terminalSession) {
+    this.terminalSession = terminalSession;
+    
+    // Update command history if available
+    if (terminalSession && terminalSession.shellHistory && terminalSession.commandHistory) {
+      this.updateCommandHistory(terminalSession.shellHistory, terminalSession.commandHistory);
+    }
+  }
+  
+  // Basic path completion for file/directory arguments
+  async getPathCompletions(partialPath) {
+    if (!window.terminal) return [];
+    
+    try {
+      // For now, return some common paths that might exist
+      // In a full implementation, this would query the file system
+      const commonPaths = [
+        { name: './', description: 'Current directory', usage: './' },
+        { name: '../', description: 'Parent directory', usage: '../' },
+        { name: '~/', description: 'Home directory', usage: '~/' },
+        { name: 'Documents/', description: 'Documents folder', usage: 'Documents/' },
+        { name: 'Desktop/', description: 'Desktop folder', usage: 'Desktop/' },
+        { name: 'Downloads/', description: 'Downloads folder', usage: 'Downloads/' }
+      ];
+      
+      if (!partialPath) return commonPaths;
+      
+      return commonPaths.filter(path => 
+        this.fuzzyMatch(path.name, partialPath)
+      );
+      
+    } catch (error) {
+      console.error('Path completion error:', error);
+      return [];
+    }
+  }
+  
+  // Enhanced parameter suggestions that includes path completion
+  async getEnhancedParameterSuggestions(command, args) {
+    const basicSuggestions = this.getParameterSuggestions(command, args);
+    
+    // For commands that take file/directory arguments, add path completion
+    const pathCommands = ['cd', 'dir', 'ls', 'type', 'copy', 'move', 'del', 'Set-Location', 'Get-ChildItem', 'Get-Content'];
+    
+    if (pathCommands.includes(command) && args.length > 0) {
+      const lastArg = args[args.length - 1];
+      const pathCompletions = await this.getPathCompletions(lastArg);
+      
+      return [...basicSuggestions, ...pathCompletions];
+    }
+    
+    return basicSuggestions;
   }
   
   // Method to set completion callback
@@ -371,6 +607,7 @@ const autocompleteCSS = `
 
 .command-autocomplete .autocomplete-item.selected {
   background: #404040;
+  border-left: 3px solid #4fc3f7;
 }
 
 .command-autocomplete .autocomplete-item:hover {
@@ -382,6 +619,11 @@ const autocompleteCSS = `
   font-weight: 600;
   margin-bottom: 2px;
   font-size: 14px;
+}
+
+.command-autocomplete .command-name.history {
+  color: #f0c674;
+  font-weight: 500;
 }
 
 .command-autocomplete .command-description {
@@ -396,22 +638,53 @@ const autocompleteCSS = `
   font-style: italic;
 }
 
-/* Scrollbar styling */
+/* Enhanced visual hierarchy */
+.command-autocomplete .autocomplete-item.selected .command-name {
+  color: #ffffff;
+}
+
+.command-autocomplete .autocomplete-item.selected .command-description {
+  color: #e8e8e8;
+}
+
+.command-autocomplete .autocomplete-item.selected .command-usage {
+  color: #aaaaaa;
+}
+
+/* Improved scrollbar styling */
 .command-autocomplete::-webkit-scrollbar {
   width: 6px;
 }
 
 .command-autocomplete::-webkit-scrollbar-track {
   background: #2d2d2d;
+  border-radius: 3px;
 }
 
 .command-autocomplete::-webkit-scrollbar-thumb {
   background: #555;
   border-radius: 3px;
+  transition: background-color 0.2s ease;
 }
 
 .command-autocomplete::-webkit-scrollbar-thumb:hover {
   background: #666;
+}
+
+/* Add subtle animation */
+.command-autocomplete {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 `;
 

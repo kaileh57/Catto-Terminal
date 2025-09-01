@@ -230,14 +230,23 @@ class TerminalSession {
       this.commandInterceptor = new window.CommandInterceptor();
     }
     
-    // Create autocomplete
+    // Create autocomplete with enhanced functionality
     this.autocomplete = null;
     if (window.CommandAutocomplete) {
       this.autocomplete = new window.CommandAutocomplete(this.terminal.element);
+      
+      // Connect autocomplete to this terminal session
+      this.autocomplete.setTerminalSession(this);
+      
       // Set up autocomplete completion callback
       this.autocomplete.onCommandComplete((commandName) => {
-        // Replace the current partial command with the completed command
-        this.replaceCurrentCommand('/' + commandName + ' ');
+        // For slash commands, add the '/' prefix back
+        if (this.currentCommand.startsWith('/')) {
+          this.replaceCurrentCommand('/' + commandName + ' ');
+        } else {
+          // For regular commands, replace entirely
+          this.replaceCurrentCommand(commandName + ' ');
+        }
       });
     }
     
@@ -2016,6 +2025,11 @@ class TerminalSession {
     if (history.length === 0 || history[history.length - 1] !== trimmedCommand) {
       history.push(trimmedCommand);
       console.log(`Added to ${isSlashCommand ? 'command' : 'shell'} history: "${trimmedCommand}"`);
+      
+      // Update autocomplete with latest command history
+      if (this.autocomplete) {
+        this.autocomplete.updateCommandHistory(this.shellHistory, this.commandHistory);
+      }
     }
     
     // Reset history navigation state
